@@ -5,9 +5,30 @@
 Determinant is an R3 terminal toolkit foundation, extracted from Vexspoke's CLI.
 Implemented source includes owned parsed commands, whitespace command parsing,
 an explicit caller-backed command registry, caller-fed scanner, sink-routed log
-presentation, a caller-owned ASCII cell grid, normalized key/click button input,
-and a resident terminal with replaceable view/command exports. No OS terminal,
-worker, sockets, loader or app/session policy is implemented here.
+presentation, and a resident terminal with replaceable view/command exports.
+
+On top of that sits a **bare** terminal-UI toolkit — geometry and widgets only,
+with no application content:
+
+- `terminal_canvas` — a clipped rectangular view over a caller-owned cell grid of
+  four parallel planes (glyph, style, **fg**, **bg**); a `TerminalPen` carries
+  style + colours, and colours are packed `0xRRGGBBAA` (the Strict Color Law).
+- `terminal_style` / `terminal_color` — host-neutral attribute flags and the
+  colour packing helpers; the toolkit never emits an escape.
+- `terminal_image` — rasterise borrowed **RGBA8 pixels into cells**: box-sample,
+  luminance→glyph ramp, per-cell colour. The "image → canvas" capability.
+- `terminal_frame` — a bare region layout (header / left / centre / right /
+  footer) plus its own rules and an optional borrowed background image.
+- `terminal_list_view`, `terminal_text_view`, `terminal_input_line`,
+  `terminal_status_bar` — generic widgets holding no meaning: channels, users,
+  commands and settings are all the same list with different labels.
+- `terminal` / `terminal_button` — the resident host state with replaceable
+  view/command exports, and a normalized key/click button.
+
+Nothing here knows about chats, users, badges, personalities or `>w<` art — those
+are application content drawn *through* the toolkit by the app (see the
+`test(...)` owners). No OS terminal, worker, sockets, loader or app/session policy
+is implemented here.
 
 The independent owner runner is `python3 tests/determinant/run.py` from the
 workspace root. Proof is scoped to the actually executed owners and platform;
