@@ -22,8 +22,8 @@
 // framebuffer, a graphvex Image, or a small constant art table all work). It
 // never names a terminal, never writes to a device, and never allocates.
 //
-// Primeagen's `>w<` badge is exactly this: an app-owned image rendered through
-// the toolkit. The toolkit ships no badge art of its own.
+// An application's badge or wallpaper is exactly this: an app-owned image
+// rendered through the toolkit. The toolkit ships no art of its own.
 
 #define TERMINAL_IMAGE_RAMP_DEFAULT " .:-=+*#%@"
 

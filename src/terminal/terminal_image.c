@@ -11,8 +11,8 @@
 /** Image → cells. A TerminalImage borrows decoded RGBA8 pixels and rasterises
  * them into a canvas region: each cell averages a box of source pixels into a
  * luminance, picks a glyph from a character ramp, and stamps the image's style
- * flags. Owns no memory, decodes nothing, names no terminal. The `>w<` badge
- * Primeagen shows is just one such image; the toolkit ships no art. */
+ * flags. Owns no memory, decodes nothing, names no terminal. An application's
+ * badge or wallpaper is just one such image; the toolkit ships no art. */
 ;;OVERVIEW
 /** ========================================================================
  * CLASS: TerminalImage (terminal/terminal_image.c)

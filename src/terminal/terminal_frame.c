@@ -22,11 +22,14 @@
  * size_t leftWidth, rightWidth   requested column widths
  * size_t headerRows, footerRows  top/bottom band rows
  * const TerminalImage *background  borrowed background image (nullable)
+ * TerminalRule rule              connector glyph set (see TerminalRule)
  * PRIVATE HELPERS
  * clampRail(requested, total)  rail width clamped to a third of the root
- * geometry(self, root, out)    computed rails + band offsets
+ * frameGeometry(self, root)    computed rails + band offsets
  * FUNCTION REGISTRY (exports)
  * Constructors: TerminalFrame_0(void), TerminalFrame_2(left, right)
+ * Rules: TerminalRule_0/_2/_4, TerminalRule_draw(rule, canvas, ly, pen),
+ *   TerminalFrame_setRule/getRule(self, rule)
  * Config: setRails/getRails, setBands/getBands, setBackground/getBackground
  * Layout: TerminalFrame_getLayout(self, root, outLeft, outRight, outRails)
  * Regions: TerminalFrame_header/left/center/right/footer(self, root)
@@ -82,7 +85,39 @@ TerminalFrame TerminalFrame_2(size_t leftWidth, size_t rightWidth) {
     frame.leftWidth = leftWidth;
     frame.rightWidth = rightWidth;
     frame.headerRows = TERMINAL_FRAME_HEADER_ROWS_DEFAULT;
+    frame.rule = TerminalRule_0();
     return frame;
+}
+
+TerminalRule TerminalRule_0(void) {
+    return (TerminalRule) { '-', '|', '+', '+', '\0', 0 };
+}
+TerminalRule TerminalRule_2(char horizontal, char vertical) {
+    return (TerminalRule) { horizontal, vertical, '+', '+', '\0', 0 };
+}
+TerminalRule TerminalRule_4(char horizontal, char vertical, char stripe, size_t stripeEvery) {
+    return (TerminalRule) { horizontal, vertical, '+', '+', stripe, stripeEvery };
+}
+
+void TerminalRule_draw(const TerminalRule *rule, TerminalCanvas *canvas, size_t ly, TerminalPen pen) {
+    if (rule == nullptr || !TerminalCanvas_isValid(canvas))
+        return;
+    size_t width = TerminalCanvas_getWidth(canvas);
+    for (size_t x = 0; x < width; ++x) {
+        char ch = (*rule).horizontal;
+        if ((*rule).stripe != '\0' && (*rule).stripeEvery > 0 && (x % (*rule).stripeEvery) == ((*rule).stripeEvery - 1))
+            ch = (*rule).stripe;
+        TerminalCanvas_text(canvas, x, ly, &ch, 1, pen);
+    }
+}
+
+bool TerminalFrame_setRule(TerminalFrame *self, TerminalRule rule) {
+    if (self == nullptr) { THROW("TerminalFrame rule: null self"); return false; }
+    (*self).rule = rule;
+    return true;
+}
+void TerminalFrame_getRule(const TerminalFrame *self, TerminalRule *outRule) {
+    if (outRule) *outRule = self ? (*self).rule : TerminalRule_0();
 }
 
 bool TerminalFrame_setRails(TerminalFrame *self, size_t leftWidth, size_t rightWidth) {
@@ -187,19 +222,33 @@ TerminalCanvas TerminalFrame_footer(const TerminalFrame *self, const TerminalCan
     return TerminalCanvas_sub(root, centreX(&g), y, w, g.footerRows);
 }
 
-void TerminalFrame_drawRules(const TerminalFrame *self, TerminalCanvas *root, TerminalPen rule) {
+void TerminalFrame_drawRules(const TerminalFrame *self, TerminalCanvas *root, TerminalPen pen) {
     if (self == nullptr || !TerminalCanvas_isValid(root))
         return;
     FrameGeometry g = frameGeometry(self, root);
+    const TerminalRule *rule = &(*self).rule;
+    size_t W = TerminalCanvas_getWidth(root);
     if (g.headerRows > 0) {
-        TerminalCanvas header = TerminalCanvas_sub(root, 0, 0, TerminalCanvas_getWidth(root), g.headerRows);
-        TerminalCanvas_hline(&header, g.headerRows - 1, '-', rule);
+        TerminalCanvas header = TerminalCanvas_sub(root, 0, 0, W, g.headerRows);
+        TerminalRule_draw(rule, &header, g.headerRows - 1, pen);
+        if (g.rails) {
+            // Join the run to each rail with a junction glyph (the connector).
+            char j = (*rule).junction;
+            TerminalCanvas_text(root, g.left, g.headerRows - 1, &j, 1, pen);
+            TerminalCanvas_text(root, W - g.right - 1, g.headerRows - 1, &j, 1, pen);
+        }
     }
     if (g.rails) {
         TerminalCanvas leftRule = TerminalCanvas_sub(root, g.left, g.bodyY, 1, g.bodyH);
-        TerminalCanvas_vline(&leftRule, 0, '|', rule);
-        TerminalCanvas rightRule = TerminalCanvas_sub(root, TerminalCanvas_getWidth(root) - g.right - 1, g.bodyY, 1, g.bodyH);
-        TerminalCanvas_vline(&rightRule, 0, '|', rule);
+        TerminalCanvas_vline(&leftRule, 0, (*rule).vertical, pen);
+        TerminalCanvas rightRule = TerminalCanvas_sub(root, W - g.right - 1, g.bodyY, 1, g.bodyH);
+        TerminalCanvas_vline(&rightRule, 0, (*rule).vertical, pen);
+        if (g.headerRows == 0) {
+            // No header run: cap each rail with the corner glyph.
+            char c = (*rule).corner;
+            TerminalCanvas_text(root, g.left, g.bodyY, &c, 1, pen);
+            TerminalCanvas_text(root, W - g.right - 1, g.bodyY, &c, 1, pen);
+        }
     }
 }
 

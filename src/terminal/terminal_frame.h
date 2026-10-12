@@ -24,12 +24,35 @@
 
 #define TERMINAL_FRAME_HEADER_ROWS_DEFAULT 2u   // one title row + one rule row
 
+// A rule glyph set. The defaults are a CONNECTOR, not a bare line: the
+// horizontal run is joined to the vertical rails by junction glyphs (like the
+// `|`/`-`/`` ` `` leaders in type.h), and the run may be STRIPED so it reads as a
+// dotted guide rather than a solid `------`. All ASCII.
+typedef struct TerminalRule {
+    char horizontal;    // horizontal run glyph (default '-')
+    char vertical;      // rail glyph (default '|')
+    char junction;      // where a rail meets a horizontal run (default '+')
+    char corner;        // rail top when there is no header run (default '+')
+    char stripe;        // alternate run glyph; '\0' means no striping
+    size_t stripeEvery; // period of the stripe (e.g. 4 => "---=")
+} TerminalRule;
+
+TerminalRule TerminalRule_0(void);                       // connector, solid
+TerminalRule TerminalRule_2(char horizontal, char vertical);   // custom glyphs
+TerminalRule TerminalRule_4(char horizontal, char vertical, char stripe, size_t stripeEvery);
+#define TerminalRule(...) CONSTRUCTOR_DISPATCH(TerminalRule, __VA_ARGS__)
+#define TerminalRule_zero() TerminalRule_0()
+
+// Draw one styled horizontal run into a canvas region row (app footer rules).
+void TerminalRule_draw(const TerminalRule *rule, TerminalCanvas *canvas, size_t ly, TerminalPen pen);
+
 typedef struct TerminalFrame {
     size_t leftWidth;    // requested left-column width
     size_t rightWidth;   // requested right-column width
     size_t headerRows;   // top band rows (0 => none); the rule sits on the last
     size_t footerRows;   // bottom band rows under the centre column (0 => none)
     const TerminalImage *background;   // borrowed, nullable
+    TerminalRule rule;   // connector glyph set used by drawRules
 } TerminalFrame;
 
 TerminalFrame TerminalFrame_0(void);
@@ -58,8 +81,11 @@ TerminalCanvas TerminalFrame_center(const TerminalFrame *self, const TerminalCan
 TerminalCanvas TerminalFrame_right(const TerminalFrame *self, const TerminalCanvas *root);
 TerminalCanvas TerminalFrame_footer(const TerminalFrame *self, const TerminalCanvas *root);
 
-// Draw the frame's own rules: the header rule and the two column separators.
+// Draw the frame's own rules: the header run (with rail junctions) and the two
+// rail columns, using the frame's TerminalRule connector set.
 void TerminalFrame_drawRules(const TerminalFrame *self, TerminalCanvas *root, TerminalPen rule);
+bool TerminalFrame_setRule(TerminalFrame *self, TerminalRule rule);
+void TerminalFrame_getRule(const TerminalFrame *self, TerminalRule *outRule);
 
 bool TerminalFrame_toString(const TerminalFrame *self, char *dest, size_t cap, bool *outTruncated);
 bool TerminalFrame_toStringStruct(const TerminalFrame *self, char *dest, size_t cap, bool *outTruncated);
