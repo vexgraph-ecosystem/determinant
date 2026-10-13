@@ -49,6 +49,7 @@ TerminalImage TerminalImage_0(void) {
     image.style = TERMINAL_STYLE_DIM;
     image.color = true;
     image.skipTransparent = true;
+    image.cellAspect = 2.0;   // a terminal cell is ~2x taller than wide
     return image;
 }
 
@@ -165,6 +166,13 @@ void TerminalImage_setSkipTransparent(TerminalImage *self, bool skip) { if (self
 bool TerminalImage_skipsTransparent(const TerminalImage *self) { return self && (*self).skipTransparent; }
 void TerminalImage_setInvert(TerminalImage *self, bool invert) { if (self != nullptr) (*self).invert = invert; }
 bool TerminalImage_inverted(const TerminalImage *self) { return self && (*self).invert; }
+void TerminalImage_setCellAspect(TerminalImage *self, double aspect) {
+    if (self != nullptr && aspect > 0.0)
+        (*self).cellAspect = aspect;
+}
+double TerminalImage_getCellAspect(const TerminalImage *self) {
+    return (self && (*self).cellAspect > 0.0) ? (*self).cellAspect : 2.0;
+}
 
 uint8_t TerminalImage_luminance(uint8_t r, uint8_t g, uint8_t b) {
     // Rec. 709 luma on 8-bit channels, integer arithmetic (deterministic).
@@ -257,6 +265,43 @@ void TerminalImage_renderFit(const TerminalImage *self, TerminalCanvas *canvas) 
             char glyph = TerminalImage_glyph(self, TerminalImage_luminance(r, g, b));
             TerminalPen pen = TerminalPen_2((*self).style, imageColor(self, lx, ly, r, g, b));
             TerminalCanvas_text(canvas, lx, ly, &glyph, 1, pen);
+        }
+    }
+}
+
+void TerminalImage_renderContain(const TerminalImage *self, TerminalCanvas *canvas) {
+    if (!TerminalImage_isValid(self) || !TerminalCanvas_isValid(canvas))
+        return;
+    size_t regionW = TerminalCanvas_getWidth(canvas);
+    size_t regionH = TerminalCanvas_getHeight(canvas);
+    if (regionW == 0 || regionH == 0)
+        return;
+    // One scale for both axes, so the picture is never squashed; the cells are
+    // ~2x taller than wide, so the vertical extent is corrected by cellAspect.
+    double aspect = (*self).cellAspect > 0.0 ? (*self).cellAspect : 1.0;
+    double widthPerHeight = (double) (*self).width / (double) (*self).height * aspect;
+    size_t destW = regionW;
+    size_t destH = (size_t) ((double) regionW / widthPerHeight + 0.5);
+    if (destH > regionH) {
+        destH = regionH;
+        destW = (size_t) ((double) regionH * widthPerHeight + 0.5);
+    }
+    if (destW == 0 || destH == 0)
+        return;
+    if (destW > regionW) destW = regionW;
+    if (destH > regionH) destH = regionH;
+    size_t offsetX = (regionW - destW) / 2;
+    size_t offsetY = (regionH - destH) / 2;
+    for (size_t ly = 0; ly < destH; ++ly) {
+        for (size_t lx = 0; lx < destW; ++lx) {
+            uint8_t r = 0, g = 0, b = 0, a = 0;
+            if (!TerminalImage_sampleCell(self, lx, ly, destW, destH, &r, &g, &b, &a))
+                continue;
+            if (TerminalImage_skipsTransparent(self) && a == 0)
+                continue;
+            char glyph = TerminalImage_glyph(self, TerminalImage_luminance(r, g, b));
+            TerminalPen pen = TerminalPen_2((*self).style, imageColor(self, lx, ly, r, g, b));
+            TerminalCanvas_text(canvas, offsetX + lx, offsetY + ly, &glyph, 1, pen);
         }
     }
 }

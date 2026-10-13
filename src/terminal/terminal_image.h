@@ -43,6 +43,8 @@ typedef struct TerminalImage {
     uint32_t jitterSeed;         // reproducible scatter
     bool skipTransparent;   // leave alpha==0 cells untouched (default true)
     bool invert;            // treat bright as low luminance (default false)
+    double cellAspect;      // cell height / width (default 2.0): corrects a
+                            // CONTAIN fit so a square source reads square in cells
 } TerminalImage;
 
 TerminalImage TerminalImage_0(void);
@@ -76,6 +78,10 @@ void        TerminalImage_setSkipTransparent(TerminalImage *self, bool skip);
 bool        TerminalImage_skipsTransparent(const TerminalImage *self);
 void        TerminalImage_setInvert(TerminalImage *self, bool invert);
 bool        TerminalImage_inverted(const TerminalImage *self);
+// Cell height ÷ width used by the CONTAIN fit (default 2.0 — a terminal cell is
+// about twice as tall as it is wide). Set 1.0 for a square-pixel surface.
+void        TerminalImage_setCellAspect(TerminalImage *self, double aspect);
+double      TerminalImage_getCellAspect(const TerminalImage *self);
 
 // Pure helpers (public so a caller/tests can reason about the mapping).
 // Rec. 709 luminance from 8-bit channels, 0..255.
@@ -93,6 +99,11 @@ void TerminalImage_render(const TerminalImage *self, TerminalCanvas *canvas, siz
 // Rasterise to FILL and COVER the whole canvas region (box-downsample when the
 // image is larger than the region, nearest when smaller). Deterministic.
 void TerminalImage_renderFit(const TerminalImage *self, TerminalCanvas *canvas);
+// Rasterise with a UNIFORM zoom-to-fit: the whole picture is scaled by one
+// factor that makes it fit inside the region and is centred, so its aspect and
+// orientation never change (a portrait stays portrait, a wide stays wide — it is
+// never squashed to the panel). This is the one for a badge or a logo.
+void TerminalImage_renderContain(const TerminalImage *self, TerminalCanvas *canvas);
 
 bool TerminalImage_toString(const TerminalImage *self, char *dest, size_t cap, bool *outTruncated);
 bool TerminalImage_toStringStruct(const TerminalImage *self, char *dest, size_t cap, bool *outTruncated);
