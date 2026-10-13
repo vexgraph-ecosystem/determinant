@@ -1,0 +1,157 @@
+#include "terminal/terminal_appearance.h"
+#include "terminal/terminal_color.h"
+#include "exception/throw.h"
+#include "annotation/definition.h"
+#include "annotation/overview.h"
+#include <string.h>
+#include <stdio.h>
+
+;;DEFINITION
+/** Named appearance presets: a connector glyph set plus a colour palette, chosen
+ * by name from an application's settings UI and applied by the app. The toolkit
+ * stores no preference and reads no config — it only defines the presets and the
+ * two apply calls. Glyphs are codepoints, so a preset may use real box drawing
+ * ('─', '—', '═') now that cells are codepoints, not bytes. */
+;;OVERVIEW
+/** ========================================================================
+ * CLASS: TerminalAppearance (terminal/terminal_appearance.c)
+ * STRUCT FIELDS (Mirroring terminal/terminal_appearance.h)
+ * TerminalRule rule            connector glyph set
+ * uint32_t colorAccent, colorMuted, colorText, colorError   palette
+ * FILE-LOCAL CONSTANTS
+ * PRESETS[] / PRESET_NAMES[]   the named appearance table
+ * FUNCTION REGISTRY (exports)
+ * Default: TerminalAppearance_0(void)
+ * Registry: presetCount, presetName(index), preset(index), named(name)
+ * Config: set/getRule, set/getColors
+ * Apply: TerminalAppearance_applyTo(self, frame),
+ *   TerminalAppearance_drawRule(self, canvas, ly, pen)
+ * Projections: bool TerminalAppearance_toString/toStringStruct(...)
+ * CONTRACT: an unknown name or out-of-range index yields the default; null self
+ * is rejected; apply/draw no-op on null targets; no allocation, no logging.
+ * ======================================================================== */
+
+// Box-drawing and dash codepoints used by the presets.
+#define CP_LIGHT_H  0x2500u   // ─
+#define CP_LIGHT_V  0x2502u   // │
+#define CP_LIGHT_T  0x252Cu   // ┬ (rail drops from the run)
+#define CP_LIGHT_L  0x251Cu   // ├ (rail top, no run)
+#define CP_EMDASH   0x2014u   // —
+#define CP_DOUBLE_H 0x2550u   // ═
+#define CP_DOUBLE_V 0x2551u   // ║
+#define CP_DOUBLE_T 0x2566u   // ╦
+#define CP_DOUBLE_L 0x2560u   // ╠
+
+typedef struct AppearancePreset {
+    const char *name;
+    TerminalRule rule;
+} AppearancePreset;
+
+static const AppearancePreset PRESETS[] = {
+    { "ascii-solid",   { '-', '|', '+', '+', 0,            0 } },
+    { "ascii-striped", { '-', '|', '+', '+', '.',          4 } },
+    { "ascii-dashed",  { '-', '|', '+', '+', ' ',          2 } },
+    { "unicode-light", { CP_LIGHT_H, CP_LIGHT_V, CP_LIGHT_T, CP_LIGHT_L, 0, 0 } },
+    { "unicode-emdash",{ CP_EMDASH,  CP_LIGHT_V, CP_LIGHT_T, CP_LIGHT_L, 0, 0 } },
+    { "unicode-double",{ CP_DOUBLE_H, CP_DOUBLE_V, CP_DOUBLE_T, CP_DOUBLE_L, 0, 0 } },
+};
+
+static const size_t PRESET_COUNT = sizeof(PRESETS) / sizeof(PRESETS[0]);
+static const size_t PRESET_DEFAULT = 1;   // "ascii-striped"
+
+static TerminalAppearance makeAppearance(size_t index) {
+    TerminalAppearance appearance = {0};
+    appearance.rule = PRESETS[index].rule;
+    appearance.colorAccent = TERMINAL_RGB(0x7A, 0xC8, 0xFF);
+    appearance.colorMuted = TERMINAL_RGB(0x88, 0x88, 0x88);
+    appearance.colorText = TERMINAL_RGB(0xE6, 0xE6, 0xE6);
+    appearance.colorError = TERMINAL_RGB(0xFF, 0x6B, 0x6B);
+    return appearance;
+}
+
+TerminalAppearance TerminalAppearance_0(void) {
+    return makeAppearance(PRESET_DEFAULT);
+}
+
+size_t TerminalAppearance_presetCount(void) { return PRESET_COUNT; }
+
+const char *TerminalAppearance_presetName(size_t index) {
+    return index < PRESET_COUNT ? PRESETS[index].name : nullptr;
+}
+
+TerminalAppearance TerminalAppearance_preset(size_t index) {
+    return makeAppearance(index < PRESET_COUNT ? index : PRESET_DEFAULT);
+}
+
+TerminalAppearance TerminalAppearance_named(const char *name) {
+    if (name != nullptr) {
+        for (size_t i = 0; i < PRESET_COUNT; ++i)
+            if (strcmp(name, PRESETS[i].name) == 0)
+                return makeAppearance(i);
+    }
+    return makeAppearance(PRESET_DEFAULT);
+}
+
+bool TerminalAppearance_setRule(TerminalAppearance *self, TerminalRule rule) {
+    if (self == nullptr) { THROW("TerminalAppearance rule: null self"); return false; }
+    (*self).rule = rule;
+    return true;
+}
+void TerminalAppearance_getRule(const TerminalAppearance *self, TerminalRule *outRule) {
+    if (outRule) *outRule = self ? (*self).rule : TerminalRule_0();
+}
+bool TerminalAppearance_setColors(TerminalAppearance *self, uint32_t accent, uint32_t muted,
+                                  uint32_t text, uint32_t error) {
+    if (self == nullptr) { THROW("TerminalAppearance colors: null self"); return false; }
+    (*self).colorAccent = accent;
+    (*self).colorMuted = muted;
+    (*self).colorText = text;
+    (*self).colorError = error;
+    return true;
+}
+void TerminalAppearance_getColors(const TerminalAppearance *self, uint32_t *outAccent,
+                                  uint32_t *outMuted, uint32_t *outText, uint32_t *outError) {
+    if (outAccent) *outAccent = self ? (*self).colorAccent : TERMINAL_COLOR_DEFAULT;
+    if (outMuted) *outMuted = self ? (*self).colorMuted : TERMINAL_COLOR_DEFAULT;
+    if (outText) *outText = self ? (*self).colorText : TERMINAL_COLOR_DEFAULT;
+    if (outError) *outError = self ? (*self).colorError : TERMINAL_COLOR_DEFAULT;
+}
+
+void TerminalAppearance_applyTo(const TerminalAppearance *self, TerminalFrame *frame) {
+    if (self == nullptr || frame == nullptr)
+        return;
+    (void) TerminalFrame_setRule(frame, (*self).rule);
+}
+
+void TerminalAppearance_drawRule(const TerminalAppearance *self, TerminalCanvas *canvas,
+                                 size_t ly, TerminalPen pen) {
+    if (self == nullptr || !TerminalCanvas_isValid(canvas))
+        return;
+    TerminalRule_draw(&(*self).rule, canvas, ly, pen);
+}
+
+bool TerminalAppearance_toString(const TerminalAppearance *self, char *dest, size_t cap, bool *outTruncated) {
+    if (outTruncated != nullptr)
+        *outTruncated = false;
+    if (dest == nullptr || cap == 0) {
+        if (outTruncated != nullptr)
+            *outTruncated = true;
+        THROW("TerminalAppearance projection: missing destination");
+        return false;
+    }
+    int n = self ? snprintf(dest, cap,
+        "TerminalAppearance{h=U+%04X,v=U+%04X,junction=U+%04X,stripe=U+%04X,every=%zu,accent=0x%08X}",
+        (*self).rule.horizontal, (*self).rule.vertical, (*self).rule.junction,
+        (*self).rule.stripe, (*self).rule.stripeEvery, (*self).colorAccent)
+        : snprintf(dest, cap, "nullptr");
+    bool cut = n < 0 || (size_t) n >= cap;
+    if (outTruncated != nullptr)
+        *outTruncated = cut;
+    if (cut)
+        THROW("TerminalAppearance projection: truncated at %zu bytes", cap);
+    return !cut;
+}
+
+bool TerminalAppearance_toStringStruct(const TerminalAppearance *self, char *dest, size_t cap, bool *outTruncated) {
+    return TerminalAppearance_toString(self, dest, cap, outTruncated);
+}
