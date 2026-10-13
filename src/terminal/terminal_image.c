@@ -116,19 +116,22 @@ void TerminalImage_setJitter(TerminalImage *self, uint8_t jitter, uint32_t seed)
 }
 uint8_t TerminalImage_getJitter(const TerminalImage *self) { return self ? (*self).jitter : 0; }
 uint32_t TerminalImage_getJitterSeed(const TerminalImage *self) { return self ? (*self).jitterSeed : 0; }
+void TerminalImage_setPaletteScatter(TerminalImage *self, uint8_t steps) { if (self != nullptr) (*self).paletteScatter = steps; }
+uint8_t TerminalImage_getPaletteScatter(const TerminalImage *self) { return self ? (*self).paletteScatter : 0; }
 
-// A purple ladder for a light terminal: every channel is >= 0x80, so the whole
-// ramp reads as light lavender → near-white. NO dark entries: a badge drawn in
-// this palette never sinks into the background.
+// A purple ladder for a light terminal: the darkest entry sits at ~30% of full
+// range (0x4C ≈ 255 * 0.3) and the rest climb to near-white. Which cell takes
+// which entry is the caller's choice — luminance order, or scattered (see
+// paletteScatter) so light and dark letters interleave at random.
 static const uint32_t PURPLE_RAMP[] = {
-    TERMINAL_RGB(0x80, 0x80, 0xC8),
-    TERMINAL_RGB(0x90, 0x88, 0xD8),
-    TERMINAL_RGB(0xA0, 0x90, 0xE8),
-    TERMINAL_RGB(0xB0, 0x98, 0xF0),
-    TERMINAL_RGB(0xC0, 0xA8, 0xF8),
-    TERMINAL_RGB(0xD0, 0xB8, 0xFF),
-    TERMINAL_RGB(0xE0, 0xD0, 0xFF),
-    TERMINAL_RGB(0xF0, 0xE8, 0xFF),
+    TERMINAL_RGB(0x5A, 0x4C, 0x78),
+    TERMINAL_RGB(0x6E, 0x5A, 0x90),
+    TERMINAL_RGB(0x82, 0x6B, 0xA8),
+    TERMINAL_RGB(0x9A, 0x7E, 0xC0),
+    TERMINAL_RGB(0xB2, 0x92, 0xD4),
+    TERMINAL_RGB(0xCA, 0xAA, 0xE6),
+    TERMINAL_RGB(0xE0, 0xC6, 0xF4),
+    TERMINAL_RGB(0xF2, 0xE6, 0xFF),
 };
 const uint32_t *TerminalImage_rampPurple(size_t *outCount) {
     if (outCount) *outCount = sizeof(PURPLE_RAMP) / sizeof(PURPLE_RAMP[0]);
@@ -151,11 +154,16 @@ static uint32_t imageColor(const TerminalImage *self, size_t lx, size_t ly,
         size_t index = (size_t) lum * (*self).colorRampCount / 256u;
         if (index >= (*self).colorRampCount)
             index = (*self).colorRampCount - 1;
+        uint32_t hash = (uint32_t) lx * 73856093u ^ (uint32_t) ly * 19349663u ^ (*self).jitterSeed;
+        if ((*self).paletteScatter != 0) {
+            // Which shade a cell takes is randomized, not luminance-ordered, so
+            // light and dark entries interleave across the picture.
+            index = (index + (hash >> 8) % (*self).paletteScatter) % (*self).colorRampCount;
+        }
         uint32_t colour = (*self).colorRamp[index];
         if ((*self).jitter != 0) {
-            uint32_t hash = (uint32_t) lx * 73856093u ^ (uint32_t) ly * 19349663u ^ (*self).jitterSeed;
             // The jitter only ever LIGHTENS a palette colour (delta >= 0), so a
-            // light ramp never dips into the dark end on some cells.
+            // light ramp never dips dark on some cells.
             int delta = (int) ((hash >> 8) % ((uint32_t) (*self).jitter + 1u));
             return TERMINAL_RGBA(shiftChannel(TERMINAL_COLOR_RED(colour), delta),
                                  shiftChannel(TERMINAL_COLOR_GREEN(colour), delta),

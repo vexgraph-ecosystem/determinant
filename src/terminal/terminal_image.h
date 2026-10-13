@@ -41,6 +41,11 @@ typedef struct TerminalImage {
     size_t colorRampCount;
     uint8_t jitter;              // 0..255 per-channel variation (0 = flat)
     uint32_t jitterSeed;         // reproducible scatter
+    // Palette SCATTER: instead of following luminance, each cell's palette index
+    // is offset by a value drawn from [0, paletteScatter) and wrapped, so light
+    // and dark shades of the palette interleave across the picture. 0 = off
+    // (luminance order); the ramp's length scatters over the whole palette.
+    uint8_t paletteScatter;
     bool skipTransparent;   // leave alpha==0 cells untouched (default true)
     bool invert;            // treat bright as low luminance (default false)
     double cellAspect;      // cell height / width (default 2.0): corrects a
@@ -85,6 +90,11 @@ const uint32_t *TerminalImage_getColorRamp(const TerminalImage *self, size_t *ou
 void        TerminalImage_setJitter(TerminalImage *self, uint8_t jitter, uint32_t seed);
 uint8_t     TerminalImage_getJitter(const TerminalImage *self);
 uint32_t    TerminalImage_getJitterSeed(const TerminalImage *self);
+// Palette index scatter: 0 keeps luminance order; N > 0 offsets each cell's
+// palette index by [0, N) (wrapped), so which parts read light and which read
+// dark is randomized per cell instead of following the gradient.
+void        TerminalImage_setPaletteScatter(TerminalImage *self, uint8_t steps);
+uint8_t     TerminalImage_getPaletteScatter(const TerminalImage *self);
 // Named ramps: a purple mix for a mono mask (the `>w<` badge look).
 const uint32_t *TerminalImage_rampPurple(size_t *outCount);
 void        TerminalImage_setSkipTransparent(TerminalImage *self, bool skip);
