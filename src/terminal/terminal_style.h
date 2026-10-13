@@ -22,3 +22,4 @@
 #define TERMINAL_STYLE_USER      0x80u
 
 #endif
+

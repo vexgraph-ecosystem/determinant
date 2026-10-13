@@ -13,7 +13,7 @@
 //
 // A TerminalCanvas is a RECTANGULAR VIEW over a caller-owned cell GRID: four
 // parallel planes that describe one screen cell each —
-//   cells   (char)      the glyph
+//   cells   (uint32_t)  the GLYPH as a Unicode codepoint (not a byte!)
 //   styles  (uint8_t)   host-neutral attribute flags (DIM/BOLD/REVERSE/…)
 //   fg      (uint32_t)  packed 0xRRGGBBAA foreground (TERMINAL_COLOR_DEFAULT = unset)
 //   bg      (uint32_t)  packed 0xRRGGBBAA background (TERMINAL_COLOR_DEFAULT = unset)
@@ -21,12 +21,14 @@
 // dimension. Widgets draw through a region and are clipped to it, so a left rail
 // can never scribble into the chat column. Regions compose via TerminalCanvas_sub.
 //
-// Drawing takes a TerminalPen (style + fg + bg), so colour is one argument, not
-// four. The canvas owns NO memory and NEVER names a terminal: the host
-// (CommandLine R1, or a test) owns the grid and maps colours to its backend.
+// Glyphs are codepoints so the toolkit is UTF-8 capable: `text` decodes UTF-8 and
+// stores scalars, a double-width glyph (wcwidth == 2) occupies its cell plus a
+// continuation marker (0) in the next, and the host blits with wide cells. The
+// canvas owns NO memory and NEVER names a terminal.
 //
-// All draw operations clip and never fault on out-of-range coordinates; a draw
-// that lands fully outside the region is a silent no-op (composition, not
+// Drawing takes a TerminalPen (style + fg + bg), so colour is one argument, not
+// four. All draw operations clip and never fault on out-of-range coordinates; a
+// draw that lands fully outside the region is a silent no-op (composition, not
 // resource exhaustion).
 
 // A brush: attribute flags plus foreground/background colours. Build one with
@@ -45,7 +47,7 @@ TerminalPen TerminalPen_3(uint8_t style, uint32_t fg, uint32_t bg);
 #define TerminalPen_zero() TerminalPen_0()
 
 typedef struct TerminalCanvas {
-    char *cells;          // borrowed row-major glyphs (gridWidth * gridHeight)
+    uint32_t *cells;      // borrowed row-major glyph CODEPOINTS (gridWidth * gridHeight)
     uint8_t *styles;      // borrowed parallel style plane (nullable)
     uint32_t *fg;         // borrowed parallel foreground plane (nullable)
     uint32_t *bg;         // borrowed parallel background plane (nullable)
@@ -59,8 +61,8 @@ typedef struct TerminalCanvas {
 
 // Bind a whole grid as a canvas covering it.
 TerminalCanvas TerminalCanvas_0(void);
-TerminalCanvas TerminalCanvas_4(char *cells, uint8_t *styles, size_t width, size_t height);
-TerminalCanvas TerminalCanvas_6(char *cells, uint8_t *styles, uint32_t *fg, uint32_t *bg,
+TerminalCanvas TerminalCanvas_4(uint32_t *cells, uint8_t *styles, size_t width, size_t height);
+TerminalCanvas TerminalCanvas_6(uint32_t *cells, uint8_t *styles, uint32_t *fg, uint32_t *bg,
                                 size_t width, size_t height);
 #define TerminalCanvas(...) CONSTRUCTOR_DISPATCH(TerminalCanvas, __VA_ARGS__)
 #define TerminalCanvas_zero() TerminalCanvas_0()
@@ -72,15 +74,19 @@ TerminalCanvas TerminalCanvas_sub(const TerminalCanvas *self, size_t lx, size_t 
                                   size_t w, size_t h);
 
 // --- Primitives (all clip; coordinates are local to this region) ---
-void TerminalCanvas_fill(TerminalCanvas *self, char ch, TerminalPen pen);
+// `fill` writes one glyph (default ' '); `text` decodes UTF-8 to codepoints.
+void TerminalCanvas_fill(TerminalCanvas *self, uint32_t glyph, TerminalPen pen);
 void TerminalCanvas_text(TerminalCanvas *self, size_t lx, size_t ly,
                          const char *text, size_t length, TerminalPen pen);
-void TerminalCanvas_hline(TerminalCanvas *self, size_t ly, char ch, TerminalPen pen);
-void TerminalCanvas_vline(TerminalCanvas *self, size_t lx, char ch, TerminalPen pen);
+void TerminalCanvas_hline(TerminalCanvas *self, size_t ly, uint32_t glyph, TerminalPen pen);
+void TerminalCanvas_vline(TerminalCanvas *self, size_t lx, uint32_t glyph, TerminalPen pen);
 void TerminalCanvas_box(TerminalCanvas *self, TerminalPen pen);
 
+// Decode one UTF-8 scalar; returns bytes consumed (0 on malformed input).
+size_t TerminalCanvas_utf8Decode(const char *text, size_t length, uint32_t *outCodepoint);
+
 // --- Inspection (tests / agents) ---
-char     TerminalCanvas_charAt(const TerminalCanvas *self, size_t lx, size_t ly);
+uint32_t TerminalCanvas_glyphAt(const TerminalCanvas *self, size_t lx, size_t ly);
 uint8_t  TerminalCanvas_styleAt(const TerminalCanvas *self, size_t lx, size_t ly);
 uint32_t TerminalCanvas_fgAt(const TerminalCanvas *self, size_t lx, size_t ly);
 uint32_t TerminalCanvas_bgAt(const TerminalCanvas *self, size_t lx, size_t ly);

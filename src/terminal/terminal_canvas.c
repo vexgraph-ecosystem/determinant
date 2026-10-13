@@ -8,38 +8,45 @@
 
 ;;DEFINITION
 /** The compositor primitive: a clipped rectangular view over a caller-owned cell
- * grid of four parallel planes (glyph, style, fg, bg). Owns no memory; every
- * widget draws through a region with a TerminalPen and cannot escape it. Regions
- * compose via TerminalCanvas_sub, so a rail, a viewport and a status bar each
- * draw in local coordinates and the layout owner alone decides where they land.
- * All primitives clip and never fault; a fully-outside draw is a silent no-op
- * (composition, not exhaustion). Colour is packed 0xRRGGBBAA; the backend maps
- * it, the toolkit never emits an escape. */
+ * grid of four parallel planes (glyph codepoint, style, fg, bg). Owns no memory;
+ * every widget draws through a region with a TerminalPen and cannot escape it.
+ * Regions compose via TerminalCanvas_sub, so a rail, a viewport and a status bar
+ * each draw in local coordinates and the layout owner alone decides where they
+ * land. Glyphs are Unicode codepoints, so the toolkit is UTF-8 capable; width is
+ * computed locally (no locale), wide glyphs get a continuation cell, and the host
+ * blits wide. All primitives clip and never fault; a fully-outside draw is a
+ * silent no-op (composition, not exhaustion). Colour is packed 0xRRGGBBAA. */
 ;;OVERVIEW
 /** ========================================================================
  * CLASS: TerminalCanvas (terminal/terminal_canvas.c)
  * STRUCT FIELDS (Mirroring terminal/terminal_canvas.h)
- * char *cells                    borrowed row-major glyphs
- * uint8_t *styles                borrowed parallel style plane (nullable)
- * uint32_t *fg, *bg              borrowed parallel colour planes (nullable)
- * size_t gridWidth, gridHeight   full grid extent (indexing stride)
- * size_t x, y, width, height     this region, absolute, clipped to the grid
+ * uint32_t *cells               borrowed row-major glyph CODEPOINTS
+ * uint8_t *styles               borrowed parallel style plane (nullable)
+ * uint32_t *fg, *bg             borrowed parallel colour planes (nullable)
+ * size_t gridWidth, gridHeight  full grid extent (indexing stride)
+ * size_t x, y, width, height    this region, absolute, clipped to the grid
+ * PRIVATE HELPERS
+ * widthOf(cp)        deterministic cell width (0 combining, 1, 2 wide)
+ * encodeUtf8(cp)     encode a scalar into a byte buffer
+ * putCell(...)       write one cell + optional continuation marker
+ * clampRail-shaped geometry is NOT here; this file is geometry-free
  * FUNCTION REGISTRY (exports)
  * Pen: TerminalPen_0/_1/_2/_3
  * Constructors: TerminalCanvas_0(void), _4(cells,styles,w,h),
  *   _6(cells,styles,fg,bg,w,h)
  * Queries: bool TerminalCanvas_isValid
  *   size_t getWidth/getHeight
- *   char charAt, uint8_t styleAt, uint32_t fgAt/bgAt
+ *   uint32_t glyphAt, uint8_t styleAt, uint32_t fgAt/bgAt
  *   bool hasStylePlane/hasColorPlane
+ * Decode: size_t TerminalCanvas_utf8Decode(text, length, outCodepoint)
  * Regions: TerminalCanvas TerminalCanvas_sub(self, lx, ly, w, h)
- * Primitives: fill(self, ch, pen), text(self, lx, ly, text, len, pen),
- *   hline(self, ly, ch, pen), vline(self, lx, ch, pen), box(self, pen)
+ * Primitives: fill(self, glyph, pen), text(self, lx, ly, text, len, pen),
+ *   hline(self, ly, glyph, pen), vline(self, lx, glyph, pen), box(self, pen)
  * Projections: bool copyRow(self, ly, dest, cap, outTruncated)
  *   bool toString/toStringStruct(self, dest, cap, outTruncated)
  * CONTRACT: null/invalid canvases no-op; out-of-region coordinates clip; a null
- * plane simply drops that dimension (char-only, style-only, colour-only). No
- * allocation, no logging on any draw. Region geometry is borrowed for the call.
+ * plane drops that dimension; malformed UTF-8 becomes '?'; combining marks are
+ * not composed (documented shaping gap). No allocation, no logging on any draw.
  * ======================================================================== */
 
 TerminalPen TerminalPen_0(void) {
@@ -59,7 +66,7 @@ TerminalCanvas TerminalCanvas_0(void) {
     return (TerminalCanvas) {0};
 }
 
-static TerminalCanvas canvasMake(char *cells, uint8_t *styles, uint32_t *fg, uint32_t *bg,
+static TerminalCanvas canvasMake(uint32_t *cells, uint8_t *styles, uint32_t *fg, uint32_t *bg,
                                  size_t width, size_t height) {
     TerminalCanvas c = {0};
     if (cells == nullptr || width == 0 || height == 0)
@@ -77,11 +84,11 @@ static TerminalCanvas canvasMake(char *cells, uint8_t *styles, uint32_t *fg, uin
     return c;
 }
 
-TerminalCanvas TerminalCanvas_4(char *cells, uint8_t *styles, size_t width, size_t height) {
+TerminalCanvas TerminalCanvas_4(uint32_t *cells, uint8_t *styles, size_t width, size_t height) {
     return canvasMake(cells, styles, nullptr, nullptr, width, height);
 }
 
-TerminalCanvas TerminalCanvas_6(char *cells, uint8_t *styles, uint32_t *fg, uint32_t *bg,
+TerminalCanvas TerminalCanvas_6(uint32_t *cells, uint8_t *styles, uint32_t *fg, uint32_t *bg,
                                 size_t width, size_t height) {
     return canvasMake(cells, styles, fg, bg, width, height);
 }
@@ -91,6 +98,65 @@ bool TerminalCanvas_isValid(const TerminalCanvas *self) {
 }
 
 static size_t minSize(size_t a, size_t b) { return a < b ? a : b; }
+
+// Deterministic, locale-free cell width. 0 = combining mark; 2 = wide (CJK,
+// emoji, fullwidth); 1 = everything else.
+static size_t widthOf(uint32_t cp) {
+    if ((cp >= 0x0300 && cp <= 0x036F) || (cp >= 0x1AB0 && cp <= 0x1AFF) ||
+        (cp >= 0x1DC0 && cp <= 0x1DFF) || (cp >= 0x20D0 && cp <= 0x20FF) ||
+        (cp >= 0xFE20 && cp <= 0xFE2F))
+        return 0;
+    if ((cp >= 0x1100 && cp <= 0x115F) || (cp >= 0x2E80 && cp <= 0xA4CF) ||
+        (cp >= 0xAC00 && cp <= 0xD7A3) || (cp >= 0xF900 && cp <= 0xFAFF) ||
+        (cp >= 0xFE30 && cp <= 0xFE6F) || (cp >= 0xFF00 && cp <= 0xFF60) ||
+        (cp >= 0xFFE0 && cp <= 0xFFE6) || (cp >= 0x1F300 && cp <= 0x1FAFF) ||
+        (cp >= 0x20000 && cp <= 0x3FFFD))
+        return 2;
+    return 1;
+}
+
+size_t TerminalCanvas_utf8Decode(const char *text, size_t length, uint32_t *outCodepoint) {
+    if (text == nullptr || length == 0 || outCodepoint == nullptr)
+        return 0;
+    const unsigned char *p = (const unsigned char*) text;
+    unsigned char b0 = p[0];
+    if (b0 < 0x80u) { *outCodepoint = b0; return 1; }
+    size_t need;
+    uint32_t cp;
+    if ((b0 & 0xE0u) == 0xC0u) { need = 1; cp = b0 & 0x1Fu; }
+    else if ((b0 & 0xF0u) == 0xE0u) { need = 2; cp = b0 & 0x0Fu; }
+    else if ((b0 & 0xF8u) == 0xF0u) { need = 3; cp = b0 & 0x07u; }
+    else return 0;
+    if (length < need + 1)
+        return 0;
+    for (size_t i = 1; i <= need; ++i) {
+        if ((p[i] & 0xC0u) != 0x80u)
+            return 0;
+        cp = (cp << 6) | (p[i] & 0x3Fu);
+    }
+    *outCodepoint = cp;
+    return need + 1;
+}
+
+static size_t encodeUtf8(uint32_t cp, char *out) {
+    if (cp < 0x80u) { out[0] = (char) cp; return 1; }
+    if (cp < 0x800u) {
+        out[0] = (char) (0xC0u | (cp >> 6));
+        out[1] = (char) (0x80u | (cp & 0x3Fu));
+        return 2;
+    }
+    if (cp < 0x10000u) {
+        out[0] = (char) (0xE0u | (cp >> 12));
+        out[1] = (char) (0x80u | ((cp >> 6) & 0x3Fu));
+        out[2] = (char) (0x80u | (cp & 0x3Fu));
+        return 3;
+    }
+    out[0] = (char) (0xF0u | (cp >> 18));
+    out[1] = (char) (0x80u | ((cp >> 12) & 0x3Fu));
+    out[2] = (char) (0x80u | ((cp >> 6) & 0x3Fu));
+    out[3] = (char) (0x80u | (cp & 0x3Fu));
+    return 4;
+}
 
 TerminalCanvas TerminalCanvas_sub(const TerminalCanvas *self, size_t lx, size_t ly,
                                   size_t w, size_t h) {
@@ -122,11 +188,11 @@ TerminalCanvas TerminalCanvas_sub(const TerminalCanvas *self, size_t lx, size_t 
     return out;
 }
 
-static void putCell(const TerminalCanvas *self, size_t ax, size_t ay, char ch, TerminalPen pen) {
+static void putCell(const TerminalCanvas *self, size_t ax, size_t ay, uint32_t glyph, TerminalPen pen) {
     if (ax >= (*self).gridWidth || ay >= (*self).gridHeight)
         return;
     size_t index = ay * (*self).gridWidth + ax;
-    (*self).cells[index] = ch;
+    (*self).cells[index] = glyph;
     if ((*self).styles != nullptr)
         (*self).styles[index] = pen.style;
     if ((*self).fg != nullptr)
@@ -135,40 +201,53 @@ static void putCell(const TerminalCanvas *self, size_t ax, size_t ay, char ch, T
         (*self).bg[index] = pen.bg;
 }
 
-void TerminalCanvas_fill(TerminalCanvas *self, char ch, TerminalPen pen) {
+void TerminalCanvas_fill(TerminalCanvas *self, uint32_t glyph, TerminalPen pen) {
     if (!TerminalCanvas_isValid(self))
         return;
     for (size_t ly = 0; ly < (*self).height; ++ly)
         for (size_t lx = 0; lx < (*self).width; ++lx)
-            putCell(self, (*self).x + lx, (*self).y + ly, ch, pen);
+            putCell(self, (*self).x + lx, (*self).y + ly, glyph, pen);
+}
+
+// Write one scalar at a local column, advancing by its width and marking the
+// continuation cell of a wide glyph with 0 so layout stays aligned.
+static void putScalar(const TerminalCanvas *self, size_t *lx, size_t ly, uint32_t cp, TerminalPen pen) {
+    size_t width = widthOf(cp);
+    if (width == 0)
+        return;   // combining marks are not composed (shaping gap)
+    uint32_t glyph = (cp < 32u || cp == 127u) ? '?' : cp;
+    putCell(self, (*self).x + *lx, (*self).y + ly, glyph, pen);
+    if (width == 2 && *lx + 1 < (*self).width)
+        putCell(self, (*self).x + *lx + 1, (*self).y + ly, 0, pen);
+    *lx += width;
 }
 
 void TerminalCanvas_text(TerminalCanvas *self, size_t lx, size_t ly,
                          const char *text, size_t length, TerminalPen pen) {
     if (!TerminalCanvas_isValid(self) || text == nullptr || ly >= (*self).height)
         return;
-    for (size_t i = 0; i < length; ++i) {
-        if (lx + i >= (*self).width)
-            break;
-        unsigned char ch = (unsigned char) text[i];
-        if (ch < 32 || ch >= 127)
-            ch = '?';
-        putCell(self, (*self).x + lx + i, (*self).y + ly, (char) ch, pen);
+    size_t at = 0;
+    while (at < length && lx < (*self).width) {
+        uint32_t cp = 0;
+        size_t used = TerminalCanvas_utf8Decode(text + at, length - at, &cp);
+        if (used == 0) { cp = '?'; used = 1; }
+        putScalar(self, &lx, ly, cp, pen);
+        at += used;
     }
 }
 
-void TerminalCanvas_hline(TerminalCanvas *self, size_t ly, char ch, TerminalPen pen) {
+void TerminalCanvas_hline(TerminalCanvas *self, size_t ly, uint32_t glyph, TerminalPen pen) {
     if (!TerminalCanvas_isValid(self) || ly >= (*self).height)
         return;
     for (size_t lx = 0; lx < (*self).width; ++lx)
-        putCell(self, (*self).x + lx, (*self).y + ly, ch, pen);
+        putCell(self, (*self).x + lx, (*self).y + ly, glyph, pen);
 }
 
-void TerminalCanvas_vline(TerminalCanvas *self, size_t lx, char ch, TerminalPen pen) {
+void TerminalCanvas_vline(TerminalCanvas *self, size_t lx, uint32_t glyph, TerminalPen pen) {
     if (!TerminalCanvas_isValid(self) || lx >= (*self).width)
         return;
     for (size_t ly = 0; ly < (*self).height; ++ly)
-        putCell(self, (*self).x + lx, (*self).y + ly, ch, pen);
+        putCell(self, (*self).x + lx, (*self).y + ly, glyph, pen);
 }
 
 void TerminalCanvas_box(TerminalCanvas *self, TerminalPen pen) {
@@ -184,9 +263,9 @@ void TerminalCanvas_box(TerminalCanvas *self, TerminalPen pen) {
     putCell(self, (*self).x + (*self).width - 1, (*self).y + (*self).height - 1, '+', pen);
 }
 
-char TerminalCanvas_charAt(const TerminalCanvas *self, size_t lx, size_t ly) {
+uint32_t TerminalCanvas_glyphAt(const TerminalCanvas *self, size_t lx, size_t ly) {
     if (!TerminalCanvas_isValid(self) || lx >= (*self).width || ly >= (*self).height)
-        return '\0';
+        return 0;
     return (*self).cells[((*self).y + ly) * (*self).gridWidth + ((*self).x + lx)];
 }
 
@@ -230,11 +309,19 @@ bool TerminalCanvas_copyRow(const TerminalCanvas *self, size_t ly, char *dest, s
         dest[0] = '\0';
         return true;
     }
-    size_t n = minSize((*self).width, cap - 1);
-    for (size_t lx = 0; lx < n; ++lx)
-        dest[lx] = TerminalCanvas_charAt(self, lx, ly);
-    dest[n] = '\0';
-    bool cut = n < (*self).width;
+    size_t written = 0;
+    bool cut = false;
+    for (size_t lx = 0; lx < (*self).width; ++lx) {
+        uint32_t cp = TerminalCanvas_glyphAt(self, lx, ly);
+        if (cp == 0)                    // wide-glyph continuation cell
+            cp = ' ';
+        char encoded[4];
+        size_t n = encodeUtf8(cp, encoded);
+        if (written + n >= cap) { cut = true; break; }
+        memcpy(dest + written, encoded, n);
+        written += n;
+    }
+    dest[written] = '\0';
     if (outTruncated != nullptr)
         *outTruncated = cut;
     return !cut;
