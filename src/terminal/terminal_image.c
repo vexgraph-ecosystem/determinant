@@ -50,6 +50,7 @@ TerminalImage TerminalImage_0(void) {
     image.color = true;
     image.skipTransparent = true;
     image.cellAspect = 2.0;   // a terminal cell is ~2x taller than wide
+    image.noiseDensity = 100; // full cover until the caller thins it
     return image;
 }
 
@@ -174,6 +175,65 @@ double TerminalImage_getCellAspect(const TerminalImage *self) {
     return (self && (*self).cellAspect > 0.0) ? (*self).cellAspect : 2.0;
 }
 
+bool TerminalImage_setNoise(TerminalImage *self, const char *glyphs, uint32_t color) {
+    if (self == nullptr || glyphs == nullptr || glyphs[0] == '\0') {
+        if (self != nullptr) {
+            (*self).noise = nullptr;
+            (*self).noiseSeed = 0;
+        }
+        return false;
+    }
+    (*self).noise = glyphs;
+    (*self).noiseColor = color;
+    return true;
+}
+const char *TerminalImage_getNoise(const TerminalImage *self) { return self ? (*self).noise : nullptr; }
+void TerminalImage_setNoiseSeed(TerminalImage *self, uint32_t seed) { if (self != nullptr) (*self).noiseSeed = seed; }
+uint32_t TerminalImage_getNoiseSeed(const TerminalImage *self) { return self ? (*self).noiseSeed : 0; }
+void TerminalImage_setNoiseStyle(TerminalImage *self, uint8_t style) { if (self != nullptr) (*self).noiseStyle = style; }
+uint8_t TerminalImage_getNoiseStyle(const TerminalImage *self) { return self ? (*self).noiseStyle : 0; }
+void TerminalImage_setNoiseDensity(TerminalImage *self, uint8_t percent) {
+    if (self != nullptr)
+        (*self).noiseDensity = percent > 100 ? 100 : percent;
+}
+uint8_t TerminalImage_getNoiseDensity(const TerminalImage *self) {
+    return self ? (*self).noiseDensity : 0;
+}
+
+// Paint ONE cell of the picture. A cell that would draw the ramp's lowest level
+// (the blank background) becomes background NOISE instead: a glyph from the
+// caller's alphabet, picked by a deterministic hash of (cell, seed), so
+// advancing the seed reshuffles the decor and a fixed seed is reproducible.
+static void paintCell(const TerminalImage *self, TerminalCanvas *canvas,
+                      size_t cx, size_t cy, size_t lx, size_t ly,
+                      uint8_t r, uint8_t g, uint8_t b) {
+    char glyph = TerminalImage_glyph(self, TerminalImage_luminance(r, g, b));
+    const char *noise = (*self).noise;
+    if (noise != nullptr) {
+        const char *ramp = TerminalImage_getRamp(self);
+        if (glyph == ramp[0]) {
+            size_t count = strlen(noise);
+            uint32_t hash = (uint32_t) cx * 2654435761u ^ (uint32_t) cy * 40503u ^ (*self).noiseSeed;
+            hash ^= hash >> 13;
+            hash *= 2654435761u;
+            hash ^= hash >> 15;
+            // Density gates whether this blank cell is covered at all, so the
+            // texture can sit behind the picture instead of hiding it.
+            if ((hash % 100u) < (*self).noiseDensity) {
+                glyph = noise[(hash >> 7) % count];
+                uint32_t colour = (*self).noiseColor;
+                if (colour == TERMINAL_COLOR_DEFAULT)
+                    colour = imageColor(self, lx, ly, r, g, b);
+                TerminalCanvas_text(canvas, cx, cy, &glyph, 1,
+                                    TerminalPen_2((*self).noiseStyle, colour));
+                return;
+            }
+        }
+    }
+    TerminalCanvas_text(canvas, cx, cy, &glyph, 1,
+                        TerminalPen_2((*self).style, imageColor(self, lx, ly, r, g, b)));
+}
+
 uint8_t TerminalImage_luminance(uint8_t r, uint8_t g, uint8_t b) {
     // Rec. 709 luma on 8-bit channels, integer arithmetic (deterministic).
     return (uint8_t) ((2126u * r + 7152u * g + 722u * b) / 10000u);
@@ -242,10 +302,7 @@ void TerminalImage_render(const TerminalImage *self, TerminalCanvas *canvas, siz
             const uint8_t *p = (*self).pixels + index;
             if (TerminalImage_skipsTransparent(self) && p[3] == 0)
                 continue;
-            char glyph = TerminalImage_glyph(self, TerminalImage_luminance(p[0], p[1], p[2]));
-            TerminalPen pen = TerminalPen_2((*self).style,
-                                            imageColor(self, x + lx, y + ly, p[0], p[1], p[2]));
-            TerminalCanvas_text(canvas, x + lx, y + ly, &glyph, 1, pen);
+            paintCell(self, canvas, x + lx, y + ly, x + lx, y + ly, p[0], p[1], p[2]);
         }
     }
 }
@@ -262,9 +319,7 @@ void TerminalImage_renderFit(const TerminalImage *self, TerminalCanvas *canvas) 
                 continue;
             if (TerminalImage_skipsTransparent(self) && a == 0)
                 continue;
-            char glyph = TerminalImage_glyph(self, TerminalImage_luminance(r, g, b));
-            TerminalPen pen = TerminalPen_2((*self).style, imageColor(self, lx, ly, r, g, b));
-            TerminalCanvas_text(canvas, lx, ly, &glyph, 1, pen);
+            paintCell(self, canvas, lx, ly, lx, ly, r, g, b);
         }
     }
 }
@@ -299,9 +354,7 @@ void TerminalImage_renderContain(const TerminalImage *self, TerminalCanvas *canv
                 continue;
             if (TerminalImage_skipsTransparent(self) && a == 0)
                 continue;
-            char glyph = TerminalImage_glyph(self, TerminalImage_luminance(r, g, b));
-            TerminalPen pen = TerminalPen_2((*self).style, imageColor(self, lx, ly, r, g, b));
-            TerminalCanvas_text(canvas, offsetX + lx, offsetY + ly, &glyph, 1, pen);
+            paintCell(self, canvas, offsetX + lx, offsetY + ly, lx, ly, r, g, b);
         }
     }
 }

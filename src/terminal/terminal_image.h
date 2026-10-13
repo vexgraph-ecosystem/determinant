@@ -45,6 +45,18 @@ typedef struct TerminalImage {
     bool invert;            // treat bright as low luminance (default false)
     double cellAspect;      // cell height / width (default 2.0): corrects a
                             // CONTAIN fit so a square source reads square in cells
+    // Background NOISE (decor): every cell that would draw the ramp's LOWEST
+    // level (the blank background) is instead filled with a glyph from `noise`,
+    // chosen deterministically from (cell, noiseSeed). Advance the seed (e.g. on
+    // every revalidate) to re-scatter the texture; the same seed always produces
+    // the same picture, so a test can assert it. NULL disables the texture.
+    const char *noise;      // background glyph alphabet (nullable)
+    uint32_t noiseSeed;     // scatter seed; caller advances it to reshuffle
+    uint32_t noiseColor;    // packed 0xRRGGBBAA for the noise (DEFAULT = image's own)
+    uint8_t noiseStyle;     // style flags for the noise cells
+    uint8_t noiseDensity;   // 0..100: percent of blank cells that get a glyph
+                            // (default 100). Lower reads as a texture behind the
+                            // picture instead of a wall in front of it.
 } TerminalImage;
 
 TerminalImage TerminalImage_0(void);
@@ -82,6 +94,22 @@ bool        TerminalImage_inverted(const TerminalImage *self);
 // about twice as tall as it is wide). Set 1.0 for a square-pixel surface.
 void        TerminalImage_setCellAspect(TerminalImage *self, double aspect);
 double      TerminalImage_getCellAspect(const TerminalImage *self);
+// Background NOISE: a decorative glyph field where the picture is blank. The
+// alphabet is the caller's (the toolkit ships no art); `color` is the packed
+// 0xRRGGBBAA it draws in (TERMINAL_COLOR_DEFAULT uses the image's own colour).
+// Returns false for a null/empty alphabet (which clears the noise).
+bool        TerminalImage_setNoise(TerminalImage *self, const char *glyphs, uint32_t color);
+const char *TerminalImage_getNoise(const TerminalImage *self);
+// Advance this to re-scatter the texture — one new value per revalidate gives a
+// fresh random look; the same seed reproduces the same scatter exactly.
+void        TerminalImage_setNoiseSeed(TerminalImage *self, uint32_t seed);
+uint32_t    TerminalImage_getNoiseSeed(const TerminalImage *self);
+void        TerminalImage_setNoiseStyle(TerminalImage *self, uint8_t style);
+uint8_t     TerminalImage_getNoiseStyle(const TerminalImage *self);
+// How much of the blank area is covered, 0..100 (default 100). Below 100 the
+// texture reads as a backdrop, leaving the actual picture legible.
+void        TerminalImage_setNoiseDensity(TerminalImage *self, uint8_t percent);
+uint8_t     TerminalImage_getNoiseDensity(const TerminalImage *self);
 
 // Pure helpers (public so a caller/tests can reason about the mapping).
 // Rec. 709 luminance from 8-bit channels, 0..255.
