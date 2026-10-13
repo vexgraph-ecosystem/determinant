@@ -41,6 +41,23 @@
 #define CP_DOUBLE_V 0x2551u   // ║
 #define CP_DOUBLE_T 0x2566u   // ╦
 #define CP_DOUBLE_L 0x2560u   // ╠
+// Detached-box corners and cut endpoints. A panel gets its OWN corners instead of
+// meeting its neighbours at a junction, and a divider stops short ('╶───╴').
+#define CP_TL       0x250Cu   // ┌
+#define CP_TR       0x2510u   // ┐
+#define CP_BL       0x2514u   // └
+#define CP_BR       0x2518u   // ┘
+#define CP_CUT_L    0x2576u   // ╶
+#define CP_CUT_R    0x2574u   // ╴
+#define CP_DTL      0x2554u   // ╔
+#define CP_DTR      0x2557u   // ╗
+#define CP_DBL      0x255Au   // ╚
+#define CP_DBR      0x255Du   // ╝
+#define CP_CUT_DL   0x255Eu   // ╞
+#define CP_CUT_DR   0x2561u   // ╡
+// Every preset frames its panels with real corners and cuts its dividers short.
+#define BOX_LIGHT   CP_TL, CP_TR, CP_BL, CP_BR, CP_CUT_L, CP_CUT_R
+#define BOX_DOUBLE  CP_DTL, CP_DTR, CP_DBL, CP_DBR, CP_CUT_DL, CP_CUT_DR
 
 typedef struct AppearancePreset {
     const char *name;
@@ -48,12 +65,12 @@ typedef struct AppearancePreset {
 } AppearancePreset;
 
 static const AppearancePreset PRESETS[] = {
-    { "ascii-solid",   { '-', '|', '+', '+', 0,            0 } },
-    { "ascii-striped", { '-', '|', '+', '+', '.',          4 } },
-    { "ascii-dashed",  { '-', '|', '+', '+', ' ',          2 } },
-    { "unicode-light", { CP_LIGHT_H, CP_LIGHT_V, CP_LIGHT_T, CP_LIGHT_L, 0, 0 } },
-    { "unicode-emdash",{ CP_EMDASH,  CP_LIGHT_V, CP_LIGHT_T, CP_LIGHT_L, 0, 0 } },
-    { "unicode-double",{ CP_DOUBLE_H, CP_DOUBLE_V, CP_DOUBLE_T, CP_DOUBLE_L, 0, 0 } },
+    { "ascii-solid",   { '-', '|', '+', '+', 0,            0, BOX_LIGHT } },
+    { "ascii-striped", { '-', '|', '+', '+', '.',          4, BOX_LIGHT } },
+    { "ascii-dashed",  { '-', '|', '+', '+', ' ',          2, BOX_LIGHT } },
+    { "unicode-light", { CP_LIGHT_H, CP_LIGHT_V, CP_LIGHT_T, CP_LIGHT_L, 0, 0, BOX_LIGHT } },
+    { "unicode-emdash",{ CP_EMDASH,  CP_LIGHT_V, CP_LIGHT_T, CP_LIGHT_L, 0, 0, BOX_LIGHT } },
+    { "unicode-double",{ CP_DOUBLE_H, CP_DOUBLE_V, CP_DOUBLE_T, CP_DOUBLE_L, 0, 0, BOX_DOUBLE } },
 };
 
 static const size_t PRESET_COUNT = sizeof(PRESETS) / sizeof(PRESETS[0]);

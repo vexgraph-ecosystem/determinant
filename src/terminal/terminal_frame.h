@@ -29,6 +29,12 @@
 // the horizontal run is joined to the vertical rails by junction glyphs (like the
 // `|`/`-`/`` ` `` leaders in type.h), and the run may be STRIPED so it reads as a
 // dotted guide rather than a solid `------`.
+//
+// DETACHED boxes: a panel is drawn as its OWN box with real corners
+// ('┌','┐','└','┘') instead of meeting every neighbour at a junction — that is
+// the visual language of a terminal instrument, not one continuous table.
+// A rule drawn between panels is CUT: it stops short of the panel's verticals
+// and may carry cut-endpoint glyphs ('╶','╴') so the line visibly ends.
 typedef struct TerminalRule {
     uint32_t horizontal;  // horizontal run glyph (default '-')
     uint32_t vertical;    // rail glyph (default '|')
@@ -36,6 +42,10 @@ typedef struct TerminalRule {
     uint32_t corner;      // rail top when there is no header run (default '+')
     uint32_t stripe;      // alternate run glyph; 0 means no striping
     size_t stripeEvery;   // period of the stripe (e.g. 4 => "---.")
+    // Detached-box corners; 0 falls back to `corner`.
+    uint32_t cornerTopLeft, cornerTopRight, cornerBottomLeft, cornerBottomRight;
+    // CUT endpoints for a rule that stops short (0 => a plain space).
+    uint32_t cutLeft, cutRight;
 } TerminalRule;
 
 TerminalRule TerminalRule_0(void);                                    // connector, solid ASCII
@@ -46,6 +56,14 @@ TerminalRule TerminalRule_4(uint32_t horizontal, uint32_t vertical, uint32_t str
 
 // Draw one styled horizontal run into a canvas region row (app footer rules).
 void TerminalRule_draw(const TerminalRule *rule, TerminalCanvas *canvas, size_t ly, TerminalPen pen);
+// Draw ONE horizontal run that is CUT: inset from both edges of the region and
+// terminated with the cut-endpoint glyphs, so it stops short the way a panel
+// divider does. `inset` is the blank margin inside each edge (0 => touching).
+void TerminalRule_drawCut(const TerminalRule *rule, TerminalCanvas *canvas, size_t ly,
+                          size_t inset, TerminalPen pen);
+// Draw a DETACHED box around the whole canvas region: its own corners, its own
+// verticals, never joined to a neighbour.
+void TerminalRule_drawBox(const TerminalRule *rule, TerminalCanvas *canvas, TerminalPen pen);
 
 typedef struct TerminalFrame {
     size_t leftWidth;    // requested left-column width

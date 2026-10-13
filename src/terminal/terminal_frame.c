@@ -29,6 +29,8 @@
  * FUNCTION REGISTRY (exports)
  * Constructors: TerminalFrame_0(void), TerminalFrame_2(left, right)
  * Rules: TerminalRule_0/_2/_4, TerminalRule_draw(rule, canvas, ly, pen),
+ *   TerminalRule_drawCut(rule, canvas, ly, inset, pen)  cut, stopped-short run
+ *   TerminalRule_drawBox(rule, canvas, pen)             detached box + corners
  *   TerminalFrame_setRule/getRule(self, rule)
  * Config: setRails/getRails, setBands/getBands, setBackground/getBackground
  * Layout: TerminalFrame_getLayout(self, root, outLeft, outRight, outRails)
@@ -90,13 +92,13 @@ TerminalFrame TerminalFrame_2(size_t leftWidth, size_t rightWidth) {
 }
 
 TerminalRule TerminalRule_0(void) {
-    return (TerminalRule) { '-', '|', '+', '+', 0, 0 };
+    return (TerminalRule) { '-', '|', '+', '+', 0, 0, 0, 0, 0, 0, 0, 0 };
 }
 TerminalRule TerminalRule_2(uint32_t horizontal, uint32_t vertical) {
-    return (TerminalRule) { horizontal, vertical, '+', '+', 0, 0 };
+    return (TerminalRule) { horizontal, vertical, '+', '+', 0, 0, 0, 0, 0, 0, 0, 0 };
 }
 TerminalRule TerminalRule_4(uint32_t horizontal, uint32_t vertical, uint32_t stripe, size_t stripeEvery) {
-    return (TerminalRule) { horizontal, vertical, '+', '+', stripe, stripeEvery };
+    return (TerminalRule) { horizontal, vertical, '+', '+', stripe, stripeEvery, 0, 0, 0, 0, 0, 0 };
 }
 
 void TerminalRule_draw(const TerminalRule *rule, TerminalCanvas *canvas, size_t ly, TerminalPen pen) {
@@ -109,6 +111,55 @@ void TerminalRule_draw(const TerminalRule *rule, TerminalCanvas *canvas, size_t 
             ch = (*rule).stripe;
         TerminalCanvas_glyph(canvas, x, ly, ch, pen);
     }
+}
+
+// A CUT run: it stops short of both edges and ends in the cut-endpoint glyphs, so
+// a panel divider reads as `╶──────╴` (or a plain, clearly-ended ` ------ `)
+// rather than a line that runs into the borders.
+void TerminalRule_drawCut(const TerminalRule *rule, TerminalCanvas *canvas, size_t ly,
+                          size_t inset, TerminalPen pen) {
+    if (rule == nullptr || !TerminalCanvas_isValid(canvas))
+        return;
+    size_t width = TerminalCanvas_getWidth(canvas);
+    if (width <= inset * 2)
+        return;
+    size_t span = width - inset * 2;
+    size_t start = inset;
+    for (size_t i = 0; i < span; ++i) {
+        uint32_t ch = (*rule).horizontal;
+        if ((*rule).stripe != 0 && (*rule).stripeEvery > 0 && (i % (*rule).stripeEvery) == ((*rule).stripeEvery - 1))
+            ch = (*rule).stripe;
+        if (i == 0 && (*rule).cutLeft != 0)
+            ch = (*rule).cutLeft;
+        if (i == span - 1 && (*rule).cutRight != 0)
+            ch = (*rule).cutRight;
+        TerminalCanvas_glyph(canvas, start + i, ly, ch, pen);
+    }
+}
+
+// A DETACHED box: its own four corners and its own verticals. Nothing joins it to
+// a neighbour, which is what keeps panels reading as separate instruments.
+void TerminalRule_drawBox(const TerminalRule *rule, TerminalCanvas *canvas, TerminalPen pen) {
+    if (rule == nullptr || !TerminalCanvas_isValid(canvas))
+        return;
+    size_t width = TerminalCanvas_getWidth(canvas);
+    size_t height = TerminalCanvas_getHeight(canvas);
+    if (width < 2 || height < 2)
+        return;
+    uint32_t horizontal = (*rule).horizontal;
+    uint32_t vertical = (*rule).vertical;
+    uint32_t topLeft = (*rule).cornerTopLeft ? (*rule).cornerTopLeft : (*rule).corner;
+    uint32_t topRight = (*rule).cornerTopRight ? (*rule).cornerTopRight : (*rule).corner;
+    uint32_t bottomLeft = (*rule).cornerBottomLeft ? (*rule).cornerBottomLeft : (*rule).corner;
+    uint32_t bottomRight = (*rule).cornerBottomRight ? (*rule).cornerBottomRight : (*rule).corner;
+    TerminalCanvas_hline(canvas, 0, horizontal, pen);
+    TerminalCanvas_hline(canvas, height - 1, horizontal, pen);
+    TerminalCanvas_vline(canvas, 0, vertical, pen);
+    TerminalCanvas_vline(canvas, width - 1, vertical, pen);
+    TerminalCanvas_glyph(canvas, 0, 0, topLeft, pen);
+    TerminalCanvas_glyph(canvas, width - 1, 0, topRight, pen);
+    TerminalCanvas_glyph(canvas, 0, height - 1, bottomLeft, pen);
+    TerminalCanvas_glyph(canvas, width - 1, height - 1, bottomRight, pen);
 }
 
 bool TerminalFrame_setRule(TerminalFrame *self, TerminalRule rule) {
