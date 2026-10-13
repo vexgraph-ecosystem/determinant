@@ -45,16 +45,17 @@ typedef struct TerminalImage {
     bool invert;            // treat bright as low luminance (default false)
     double cellAspect;      // cell height / width (default 2.0): corrects a
                             // CONTAIN fit so a square source reads square in cells
-    // Background NOISE (decor): every cell that would draw the ramp's LOWEST
-    // level (the blank background) is instead filled with a glyph from `noise`,
-    // chosen deterministically from (cell, noiseSeed). Advance the seed (e.g. on
-    // every revalidate) to re-scatter the texture; the same seed always produces
-    // the same picture, so a test can assert it. NULL disables the texture.
+    // Background NOISE (decor): a glyph field that covers the WHOLE region the
+    // image draws into — edge to edge, sized by the region, never by the picture
+    // — with the picture's own content painted over it. Every glyph comes from
+    // `noise` and is chosen deterministically from (cell, noiseSeed), so
+    // advancing the seed (e.g. on every revalidate) re-scatters the decor while a
+    // fixed seed stays reproducible. NULL disables the texture.
     const char *noise;      // background glyph alphabet (nullable)
     uint32_t noiseSeed;     // scatter seed; caller advances it to reshuffle
     uint32_t noiseColor;    // packed 0xRRGGBBAA for the noise (DEFAULT = image's own)
     uint8_t noiseStyle;     // style flags for the noise cells
-    uint8_t noiseDensity;   // 0..100: percent of blank cells that get a glyph
+    uint8_t noiseDensity;   // 0..100: percent of the field that is covered
                             // (default 100). Lower reads as a texture behind the
                             // picture instead of a wall in front of it.
 } TerminalImage;

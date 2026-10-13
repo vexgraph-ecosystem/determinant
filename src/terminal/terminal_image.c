@@ -117,16 +117,18 @@ void TerminalImage_setJitter(TerminalImage *self, uint8_t jitter, uint32_t seed)
 uint8_t TerminalImage_getJitter(const TerminalImage *self) { return self ? (*self).jitter : 0; }
 uint32_t TerminalImage_getJitterSeed(const TerminalImage *self) { return self ? (*self).jitterSeed : 0; }
 
-// A purple ladder (dark rim → bright core), packed 0xRRGGBBAA.
+// A purple ladder for a light terminal: every channel is >= 0x80, so the whole
+// ramp reads as light lavender → near-white. NO dark entries: a badge drawn in
+// this palette never sinks into the background.
 static const uint32_t PURPLE_RAMP[] = {
-    TERMINAL_RGB(0x1A, 0x0B, 0x2E),
-    TERMINAL_RGB(0x2D, 0x1B, 0x4E),
-    TERMINAL_RGB(0x4B, 0x2E, 0x83),
-    TERMINAL_RGB(0x6B, 0x46, 0xC1),
-    TERMINAL_RGB(0x8B, 0x5C, 0xF6),
-    TERMINAL_RGB(0xA7, 0x8B, 0xFA),
-    TERMINAL_RGB(0xC4, 0xB5, 0xFD),
-    TERMINAL_RGB(0xE9, 0xD5, 0xFF),
+    TERMINAL_RGB(0x80, 0x80, 0xC8),
+    TERMINAL_RGB(0x90, 0x88, 0xD8),
+    TERMINAL_RGB(0xA0, 0x90, 0xE8),
+    TERMINAL_RGB(0xB0, 0x98, 0xF0),
+    TERMINAL_RGB(0xC0, 0xA8, 0xF8),
+    TERMINAL_RGB(0xD0, 0xB8, 0xFF),
+    TERMINAL_RGB(0xE0, 0xD0, 0xFF),
+    TERMINAL_RGB(0xF0, 0xE8, 0xFF),
 };
 const uint32_t *TerminalImage_rampPurple(size_t *outCount) {
     if (outCount) *outCount = sizeof(PURPLE_RAMP) / sizeof(PURPLE_RAMP[0]);
@@ -152,8 +154,9 @@ static uint32_t imageColor(const TerminalImage *self, size_t lx, size_t ly,
         uint32_t colour = (*self).colorRamp[index];
         if ((*self).jitter != 0) {
             uint32_t hash = (uint32_t) lx * 73856093u ^ (uint32_t) ly * 19349663u ^ (*self).jitterSeed;
-            uint32_t span = 2u * (*self).jitter + 1u;
-            int delta = (int) ((hash >> 8) % span) - (int) (*self).jitter;
+            // The jitter only ever LIGHTENS a palette colour (delta >= 0), so a
+            // light ramp never dips into the dark end on some cells.
+            int delta = (int) ((hash >> 8) % ((uint32_t) (*self).jitter + 1u));
             return TERMINAL_RGBA(shiftChannel(TERMINAL_COLOR_RED(colour), delta),
                                  shiftChannel(TERMINAL_COLOR_GREEN(colour), delta),
                                  shiftChannel(TERMINAL_COLOR_BLUE(colour), delta),
@@ -200,35 +203,49 @@ uint8_t TerminalImage_getNoiseDensity(const TerminalImage *self) {
     return self ? (*self).noiseDensity : 0;
 }
 
-// Paint ONE cell of the picture. A cell that would draw the ramp's lowest level
-// (the blank background) becomes background NOISE instead: a glyph from the
-// caller's alphabet, picked by a deterministic hash of (cell, seed), so
-// advancing the seed reshuffles the decor and a fixed seed is reproducible.
+// The background NOISE field: fill a whole rectangle with glyphs from the
+// caller's alphabet, gated by density and scattered by the seed. This is a
+// DECOR FIELD sized by the region (never by the picture), so it fills the panel
+// at any terminal size. Deterministic for a fixed seed.
+static void paintNoiseField(const TerminalImage *self, TerminalCanvas *canvas,
+                            size_t x0, size_t y0, size_t w, size_t h) {
+    const char *noise = (*self).noise;
+    if (noise == nullptr || (*self).noiseDensity == 0)
+        return;
+    size_t count = strlen(noise);
+    if (count == 0)
+        return;
+    uint32_t colour = (*self).noiseColor;
+    if (colour == TERMINAL_COLOR_DEFAULT)
+        colour = (*self).colorRamp != nullptr ? (*self).colorRamp[0] : TERMINAL_COLOR_DEFAULT;
+    TerminalPen pen = TerminalPen_2((*self).noiseStyle, colour);
+    for (size_t ly = 0; ly < h; ++ly) {
+        for (size_t lx = 0; lx < w; ++lx) {
+            uint32_t hash = (uint32_t) (x0 + lx) * 2654435761u
+                          ^ (uint32_t) (y0 + ly) * 40503u
+                          ^ (*self).noiseSeed;
+            hash ^= hash >> 13;
+            hash *= 2654435761u;
+            hash ^= hash >> 15;
+            if ((hash % 100u) >= (*self).noiseDensity)
+                continue;
+            char glyph = noise[(hash >> 7) % count];
+            TerminalCanvas_text(canvas, x0 + lx, y0 + ly, &glyph, 1, pen);
+        }
+    }
+}
+
+// Paint ONE cell of the picture. When a noise field is set the blank background
+// is left alone (the field underneath shows through) and only real content is
+// drawn on top.
 static void paintCell(const TerminalImage *self, TerminalCanvas *canvas,
                       size_t cx, size_t cy, size_t lx, size_t ly,
                       uint8_t r, uint8_t g, uint8_t b) {
     char glyph = TerminalImage_glyph(self, TerminalImage_luminance(r, g, b));
-    const char *noise = (*self).noise;
-    if (noise != nullptr) {
+    if ((*self).noise != nullptr) {
         const char *ramp = TerminalImage_getRamp(self);
-        if (glyph == ramp[0]) {
-            size_t count = strlen(noise);
-            uint32_t hash = (uint32_t) cx * 2654435761u ^ (uint32_t) cy * 40503u ^ (*self).noiseSeed;
-            hash ^= hash >> 13;
-            hash *= 2654435761u;
-            hash ^= hash >> 15;
-            // Density gates whether this blank cell is covered at all, so the
-            // texture can sit behind the picture instead of hiding it.
-            if ((hash % 100u) < (*self).noiseDensity) {
-                glyph = noise[(hash >> 7) % count];
-                uint32_t colour = (*self).noiseColor;
-                if (colour == TERMINAL_COLOR_DEFAULT)
-                    colour = imageColor(self, lx, ly, r, g, b);
-                TerminalCanvas_text(canvas, cx, cy, &glyph, 1,
-                                    TerminalPen_2((*self).noiseStyle, colour));
-                return;
-            }
-        }
+        if (glyph == ramp[0])
+            return;   // the decor field shows through
     }
     TerminalCanvas_text(canvas, cx, cy, &glyph, 1,
                         TerminalPen_2((*self).style, imageColor(self, lx, ly, r, g, b)));
@@ -292,6 +309,7 @@ void TerminalImage_render(const TerminalImage *self, TerminalCanvas *canvas, siz
         return;
     size_t cw = TerminalCanvas_getWidth(canvas);
     size_t chh = TerminalCanvas_getHeight(canvas);
+    paintNoiseField(self, canvas, x, y, (*self).width, (*self).height);
     for (size_t ly = 0; ly < (*self).height; ++ly) {
         if (y + ly >= chh)
             break;
@@ -312,6 +330,7 @@ void TerminalImage_renderFit(const TerminalImage *self, TerminalCanvas *canvas) 
         return;
     size_t cw = TerminalCanvas_getWidth(canvas);
     size_t chh = TerminalCanvas_getHeight(canvas);
+    paintNoiseField(self, canvas, 0, 0, cw, chh);
     for (size_t ly = 0; ly < chh; ++ly) {
         for (size_t lx = 0; lx < cw; ++lx) {
             uint8_t r = 0, g = 0, b = 0, a = 0;
@@ -347,6 +366,9 @@ void TerminalImage_renderContain(const TerminalImage *self, TerminalCanvas *canv
     if (destH > regionH) destH = regionH;
     size_t offsetX = (regionW - destW) / 2;
     size_t offsetY = (regionH - destH) / 2;
+    // The decor field covers the WHOLE region, not just the picture's fit rect,
+    // so the panel is filled edge to edge at any terminal size.
+    paintNoiseField(self, canvas, 0, 0, regionW, regionH);
     for (size_t ly = 0; ly < destH; ++ly) {
         for (size_t lx = 0; lx < destW; ++lx) {
             uint8_t r = 0, g = 0, b = 0, a = 0;
