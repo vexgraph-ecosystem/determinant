@@ -85,6 +85,12 @@ void TerminalCanvas_box(TerminalCanvas *self, TerminalPen pen);
 // Decode one UTF-8 scalar; returns bytes consumed (0 on malformed input).
 size_t TerminalCanvas_utf8Decode(const char *text, size_t length, uint32_t *outCodepoint);
 
+// Write ONE codepoint at a local cell (width-aware: a double-width glyph marks
+// its continuation cell). Use this for glyph tables; `text` decodes UTF-8.
+void TerminalCanvas_glyph(TerminalCanvas *self, size_t lx, size_t ly, uint32_t codepoint, TerminalPen pen);
+// Cell width for one codepoint (0 combining, 1, 2 wide) — locale-free.
+size_t TerminalCanvas_widthOf(uint32_t codepoint);
+
 // --- Inspection (tests / agents) ---
 uint32_t TerminalCanvas_glyphAt(const TerminalCanvas *self, size_t lx, size_t ly);
 uint8_t  TerminalCanvas_styleAt(const TerminalCanvas *self, size_t lx, size_t ly);

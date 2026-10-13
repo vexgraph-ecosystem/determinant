@@ -101,7 +101,7 @@ static size_t minSize(size_t a, size_t b) { return a < b ? a : b; }
 
 // Deterministic, locale-free cell width. 0 = combining mark; 2 = wide (CJK,
 // emoji, fullwidth); 1 = everything else.
-static size_t widthOf(uint32_t cp) {
+size_t TerminalCanvas_widthOf(uint32_t cp) {
     if ((cp >= 0x0300 && cp <= 0x036F) || (cp >= 0x1AB0 && cp <= 0x1AFF) ||
         (cp >= 0x1DC0 && cp <= 0x1DFF) || (cp >= 0x20D0 && cp <= 0x20FF) ||
         (cp >= 0xFE20 && cp <= 0xFE2F))
@@ -212,7 +212,7 @@ void TerminalCanvas_fill(TerminalCanvas *self, uint32_t glyph, TerminalPen pen) 
 // Write one scalar at a local column, advancing by its width and marking the
 // continuation cell of a wide glyph with 0 so layout stays aligned.
 static void putScalar(const TerminalCanvas *self, size_t *lx, size_t ly, uint32_t cp, TerminalPen pen) {
-    size_t width = widthOf(cp);
+    size_t width = TerminalCanvas_widthOf(cp);
     if (width == 0)
         return;   // combining marks are not composed (shaping gap)
     uint32_t glyph = (cp < 32u || cp == 127u) ? '?' : cp;
@@ -234,6 +234,13 @@ void TerminalCanvas_text(TerminalCanvas *self, size_t lx, size_t ly,
         putScalar(self, &lx, ly, cp, pen);
         at += used;
     }
+}
+
+void TerminalCanvas_glyph(TerminalCanvas *self, size_t lx, size_t ly, uint32_t codepoint, TerminalPen pen) {
+    if (!TerminalCanvas_isValid(self) || lx >= (*self).width || ly >= (*self).height)
+        return;
+    size_t x = lx;
+    putScalar(self, &x, ly, codepoint, pen);
 }
 
 void TerminalCanvas_hline(TerminalCanvas *self, size_t ly, uint32_t glyph, TerminalPen pen) {
