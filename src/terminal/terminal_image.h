@@ -34,6 +34,13 @@ typedef struct TerminalImage {
     const char *ramp;       // glyph ladder low→high (default " .:-=+*#%@")
     uint8_t style;          // style flags applied to drawn cells (default DIM)
     bool color;             // carry the sampled colour as the cell foreground
+    // Colour treatment: when colorRamp is set the luminance indexes a PALETTE
+    // (a mono mask renders as a coloured mix); `jitter` adds a deterministic
+    // per-cell shade variation so the letters do not read as one flat tone.
+    const uint32_t *colorRamp;   // low→high packed 0xRRGGBBAA (nullable)
+    size_t colorRampCount;
+    uint8_t jitter;              // 0..255 per-channel variation (0 = flat)
+    uint32_t jitterSeed;         // reproducible scatter
     bool skipTransparent;   // leave alpha==0 cells untouched (default true)
     bool invert;            // treat bright as low luminance (default false)
 } TerminalImage;
@@ -56,6 +63,15 @@ uint8_t     TerminalImage_getStyle(const TerminalImage *self);
 // foreground (packed 0xRRGGBBAA); when false the image is monochrome shading.
 void        TerminalImage_setColor(TerminalImage *self, bool color);
 bool        TerminalImage_hasColor(const TerminalImage *self);
+// Palette treatment: luminance indexes `ramp` (low→high). NULL clears it.
+bool        TerminalImage_setColorRamp(TerminalImage *self, const uint32_t *ramp, size_t count);
+const uint32_t *TerminalImage_getColorRamp(const TerminalImage *self, size_t *outCount);
+// Deterministic per-cell shade scatter (0 = flat). Seed makes it reproducible.
+void        TerminalImage_setJitter(TerminalImage *self, uint8_t jitter, uint32_t seed);
+uint8_t     TerminalImage_getJitter(const TerminalImage *self);
+uint32_t    TerminalImage_getJitterSeed(const TerminalImage *self);
+// Named ramps: a purple mix for a mono mask (the `>w<` badge look).
+const uint32_t *TerminalImage_rampPurple(size_t *outCount);
 void        TerminalImage_setSkipTransparent(TerminalImage *self, bool skip);
 bool        TerminalImage_skipsTransparent(const TerminalImage *self);
 void        TerminalImage_setInvert(TerminalImage *self, bool invert);

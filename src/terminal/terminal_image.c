@@ -22,12 +22,15 @@
  * const char *ramp       glyph ladder low→high (default " .:-=+*#%@")
  * uint8_t style          style flags on drawn cells (default DIM)
  * bool color             carry the sampled colour as foreground (default true)
+ * const uint32_t *colorRamp; size_t colorRampCount  palette treatment (nullable)
+ * uint8_t jitter; uint32_t jitterSeed  deterministic per-cell shade scatter
  * bool skipTransparent   leave alpha==0 cells untouched
  * bool invert            bright = low luminance
  * FUNCTION REGISTRY (exports)
  * Constructors: TerminalImage_0(void), TerminalImage_3(pixels, width, height)
  * Config: setPixels/getPixels, set/getRamp, set/getStyle,
- *   setColor/hasColor, setSkipTransparent/skipsTransparent, setInvert/inverted
+ *   setColor/hasColor, setColorRamp/getColorRamp, setJitter/getJitter,
+ *   rampPurple, setSkipTransparent/skipsTransparent, setInvert/inverted
  * Queries: bool TerminalImage_isValid, getWidth/getHeight
  * Mapping: uint8_t TerminalImage_luminance(r,g,b)
  *   char TerminalImage_glyph(self, luminance)
@@ -90,6 +93,74 @@ void TerminalImage_setStyle(TerminalImage *self, uint8_t style) { if (self != nu
 uint8_t TerminalImage_getStyle(const TerminalImage *self) { return self ? (*self).style : TERMINAL_STYLE_NONE; }
 void TerminalImage_setColor(TerminalImage *self, bool color) { if (self != nullptr) (*self).color = color; }
 bool TerminalImage_hasColor(const TerminalImage *self) { return self && (*self).color; }
+
+bool TerminalImage_setColorRamp(TerminalImage *self, const uint32_t *ramp, size_t count) {
+    if (self == nullptr || (count != 0 && ramp == nullptr)) {
+        THROW("TerminalImage color ramp: null");
+        return false;
+    }
+    (*self).colorRamp = (count != 0) ? ramp : nullptr;
+    (*self).colorRampCount = (count != 0) ? count : 0;
+    return true;
+}
+const uint32_t *TerminalImage_getColorRamp(const TerminalImage *self, size_t *outCount) {
+    if (outCount) *outCount = self ? (*self).colorRampCount : 0;
+    return self ? (*self).colorRamp : nullptr;
+}
+void TerminalImage_setJitter(TerminalImage *self, uint8_t jitter, uint32_t seed) {
+    if (self == nullptr) return;
+    (*self).jitter = jitter;
+    (*self).jitterSeed = seed;
+}
+uint8_t TerminalImage_getJitter(const TerminalImage *self) { return self ? (*self).jitter : 0; }
+uint32_t TerminalImage_getJitterSeed(const TerminalImage *self) { return self ? (*self).jitterSeed : 0; }
+
+// A purple ladder (dark rim → bright core), packed 0xRRGGBBAA.
+static const uint32_t PURPLE_RAMP[] = {
+    TERMINAL_RGB(0x1A, 0x0B, 0x2E),
+    TERMINAL_RGB(0x2D, 0x1B, 0x4E),
+    TERMINAL_RGB(0x4B, 0x2E, 0x83),
+    TERMINAL_RGB(0x6B, 0x46, 0xC1),
+    TERMINAL_RGB(0x8B, 0x5C, 0xF6),
+    TERMINAL_RGB(0xA7, 0x8B, 0xFA),
+    TERMINAL_RGB(0xC4, 0xB5, 0xFD),
+    TERMINAL_RGB(0xE9, 0xD5, 0xFF),
+};
+const uint32_t *TerminalImage_rampPurple(size_t *outCount) {
+    if (outCount) *outCount = sizeof(PURPLE_RAMP) / sizeof(PURPLE_RAMP[0]);
+    return PURPLE_RAMP;
+}
+
+static uint8_t shiftChannel(uint8_t value, int delta) {
+    int shifted = (int) value + delta;
+    if (shifted < 0) shifted = 0;
+    if (shifted > 255) shifted = 255;
+    return (uint8_t) shifted;
+}
+
+// The colour one cell draws with: palette (with deterministic jitter) or the
+// sampled colour, or none.
+static uint32_t imageColor(const TerminalImage *self, size_t lx, size_t ly,
+                           uint8_t r, uint8_t g, uint8_t b) {
+    if ((*self).colorRamp != nullptr && (*self).colorRampCount > 0) {
+        uint8_t lum = TerminalImage_luminance(r, g, b);
+        size_t index = (size_t) lum * (*self).colorRampCount / 256u;
+        if (index >= (*self).colorRampCount)
+            index = (*self).colorRampCount - 1;
+        uint32_t colour = (*self).colorRamp[index];
+        if ((*self).jitter != 0) {
+            uint32_t hash = (uint32_t) lx * 73856093u ^ (uint32_t) ly * 19349663u ^ (*self).jitterSeed;
+            uint32_t span = 2u * (*self).jitter + 1u;
+            int delta = (int) ((hash >> 8) % span) - (int) (*self).jitter;
+            return TERMINAL_RGBA(shiftChannel(TERMINAL_COLOR_RED(colour), delta),
+                                 shiftChannel(TERMINAL_COLOR_GREEN(colour), delta),
+                                 shiftChannel(TERMINAL_COLOR_BLUE(colour), delta),
+                                 TERMINAL_COLOR_ALPHA(colour));
+        }
+        return colour;
+    }
+    return (*self).color ? TERMINAL_RGB(r, g, b) : TERMINAL_COLOR_DEFAULT;
+}
 void TerminalImage_setSkipTransparent(TerminalImage *self, bool skip) { if (self != nullptr) (*self).skipTransparent = skip; }
 bool TerminalImage_skipsTransparent(const TerminalImage *self) { return self && (*self).skipTransparent; }
 void TerminalImage_setInvert(TerminalImage *self, bool invert) { if (self != nullptr) (*self).invert = invert; }
@@ -165,7 +236,7 @@ void TerminalImage_render(const TerminalImage *self, TerminalCanvas *canvas, siz
                 continue;
             char glyph = TerminalImage_glyph(self, TerminalImage_luminance(p[0], p[1], p[2]));
             TerminalPen pen = TerminalPen_2((*self).style,
-                                            (*self).color ? TERMINAL_RGB(p[0], p[1], p[2]) : TERMINAL_COLOR_DEFAULT);
+                                            imageColor(self, x + lx, y + ly, p[0], p[1], p[2]));
             TerminalCanvas_text(canvas, x + lx, y + ly, &glyph, 1, pen);
         }
     }
@@ -184,8 +255,7 @@ void TerminalImage_renderFit(const TerminalImage *self, TerminalCanvas *canvas) 
             if (TerminalImage_skipsTransparent(self) && a == 0)
                 continue;
             char glyph = TerminalImage_glyph(self, TerminalImage_luminance(r, g, b));
-            TerminalPen pen = TerminalPen_2((*self).style,
-                                            (*self).color ? TERMINAL_RGB(r, g, b) : TERMINAL_COLOR_DEFAULT);
+            TerminalPen pen = TerminalPen_2((*self).style, imageColor(self, lx, ly, r, g, b));
             TerminalCanvas_text(canvas, lx, ly, &glyph, 1, pen);
         }
     }
@@ -201,9 +271,10 @@ bool TerminalImage_toString(const TerminalImage *self, char *dest, size_t cap, b
         return false;
     }
     int n = self ? snprintf(dest, cap,
-        "TerminalImage{%zux%zu,ramp=\"%s\",style=0x%02X,color=%d,skipTransparent=%d,invert=%d,valid=%d}",
+        "TerminalImage{%zux%zu,ramp=\"%s\",style=0x%02X,color=%d,palette=%zu,jitter=%u,skipTransparent=%d,invert=%d,valid=%d}",
         (*self).width, (*self).height, TerminalImage_getRamp(self), (*self).style,
-        (*self).color, (*self).skipTransparent, (*self).invert, TerminalImage_isValid(self))
+        (*self).color, (*self).colorRampCount, (*self).jitter, (*self).skipTransparent, (*self).invert,
+        TerminalImage_isValid(self))
         : snprintf(dest, cap, "nullptr");
     bool cut = n < 0 || (size_t) n >= cap;
     if (outTruncated != nullptr)
