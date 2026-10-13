@@ -24,22 +24,23 @@
 
 #define TERMINAL_FRAME_HEADER_ROWS_DEFAULT 2u   // one title row + one rule row
 
-// A rule glyph set. The defaults are a CONNECTOR, not a bare line: the
-// horizontal run is joined to the vertical rails by junction glyphs (like the
+// A rule glyph set. Glyphs are CODEPOINTS, so an appearance can pick ASCII
+// ('-', '|') or real box drawing ('─', '│', '┼'). The defaults are a CONNECTOR:
+// the horizontal run is joined to the vertical rails by junction glyphs (like the
 // `|`/`-`/`` ` `` leaders in type.h), and the run may be STRIPED so it reads as a
-// dotted guide rather than a solid `------`. All ASCII.
+// dotted guide rather than a solid `------`.
 typedef struct TerminalRule {
-    char horizontal;    // horizontal run glyph (default '-')
-    char vertical;      // rail glyph (default '|')
-    char junction;      // where a rail meets a horizontal run (default '+')
-    char corner;        // rail top when there is no header run (default '+')
-    char stripe;        // alternate run glyph; '\0' means no striping
-    size_t stripeEvery; // period of the stripe (e.g. 4 => "---=")
+    uint32_t horizontal;  // horizontal run glyph (default '-')
+    uint32_t vertical;    // rail glyph (default '|')
+    uint32_t junction;    // where a rail meets a horizontal run (default '+')
+    uint32_t corner;      // rail top when there is no header run (default '+')
+    uint32_t stripe;      // alternate run glyph; 0 means no striping
+    size_t stripeEvery;   // period of the stripe (e.g. 4 => "---.")
 } TerminalRule;
 
-TerminalRule TerminalRule_0(void);                       // connector, solid
-TerminalRule TerminalRule_2(char horizontal, char vertical);   // custom glyphs
-TerminalRule TerminalRule_4(char horizontal, char vertical, char stripe, size_t stripeEvery);
+TerminalRule TerminalRule_0(void);                                    // connector, solid ASCII
+TerminalRule TerminalRule_2(uint32_t horizontal, uint32_t vertical);  // custom glyphs
+TerminalRule TerminalRule_4(uint32_t horizontal, uint32_t vertical, uint32_t stripe, size_t stripeEvery);
 #define TerminalRule(...) CONSTRUCTOR_DISPATCH(TerminalRule, __VA_ARGS__)
 #define TerminalRule_zero() TerminalRule_0()
 
