@@ -18,7 +18,12 @@ with no application content:
 - `terminal_image` — rasterise borrowed **RGBA8 pixels into cells**: box-sample,
   luminance→glyph ramp, per-cell colour. The "image → canvas" capability.
 - `terminal_frame` — a bare region layout (header / left / centre / right /
-  footer) plus its own rules and an optional borrowed background image.
+  footer) plus its own rules and an optional borrowed background image. Rules are
+  a **connector** glyph set (junctions + optional stripe), not a bare `-`/`|`.
+- `terminal_appearance` — named look presets (connector glyphs + palette) the app
+  lists, picks and persists: `ascii-solid`, `ascii-striped`, `ascii-dashed`,
+  `unicode-light`, `unicode-emdash`, `unicode-double`. Glyphs are codepoints, so
+  real box drawing works. The toolkit stores no preference; the app owns that.
 - `terminal_list_view`, `terminal_text_view`, `terminal_input_line`,
   `terminal_status_bar` — generic widgets holding no meaning: channels, users,
   commands and settings are all the same list with different labels.
