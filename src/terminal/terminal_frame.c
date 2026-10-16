@@ -36,7 +36,7 @@
  * Layout: TerminalFrame_getLayout(self, root, outLeft, outRight, outRails)
  * Regions: TerminalFrame_header/left/center/right/footer(self, root)
  * Paint: TerminalFrame_paintBackground, TerminalFrame_drawRules(self, root, pen)
- * Projections: bool TerminalFrame_toString/toStringStruct(...)
+ * Projections: TerminalProjection TerminalFrame_toString/toStringStruct(self)
  * CONTRACT: a null/invalid root yields an invalid region (draws no-op); regions
  * are clipped to the root and to the grid; no allocation, no logging.
  * ======================================================================== */
@@ -167,8 +167,8 @@ bool TerminalFrame_setRule(TerminalFrame *self, TerminalRule rule) {
     (*self).rule = rule;
     return true;
 }
-void TerminalFrame_getRule(const TerminalFrame *self, TerminalRule *outRule) {
-    if (outRule) *outRule = self ? (*self).rule : TerminalRule_0();
+TerminalRule TerminalFrame_getRule(const TerminalFrame *self) {
+    return self ? (*self).rule : TerminalRule_0();
 }
 
 bool TerminalFrame_setRails(TerminalFrame *self, size_t leftWidth, size_t rightWidth) {
@@ -180,9 +180,8 @@ bool TerminalFrame_setRails(TerminalFrame *self, size_t leftWidth, size_t rightW
     (*self).rightWidth = rightWidth;
     return true;
 }
-void TerminalFrame_getRails(const TerminalFrame *self, size_t *outLeft, size_t *outRight) {
-    if (outLeft) *outLeft = self ? (*self).leftWidth : 0;
-    if (outRight) *outRight = self ? (*self).rightWidth : 0;
+TerminalFramePair TerminalFrame_getRails(const TerminalFrame *self) {
+    return self ? (TerminalFramePair) { (*self).leftWidth, (*self).rightWidth } : (TerminalFramePair) { 0u, 0u };
 }
 bool TerminalFrame_setBands(TerminalFrame *self, size_t headerRows, size_t footerRows) {
     if (self == nullptr) {
@@ -193,9 +192,8 @@ bool TerminalFrame_setBands(TerminalFrame *self, size_t headerRows, size_t foote
     (*self).footerRows = footerRows;
     return true;
 }
-void TerminalFrame_getBands(const TerminalFrame *self, size_t *outHeader, size_t *outFooter) {
-    if (outHeader) *outHeader = self ? (*self).headerRows : 0;
-    if (outFooter) *outFooter = self ? (*self).footerRows : 0;
+TerminalFramePair TerminalFrame_getBands(const TerminalFrame *self) {
+    return self ? (TerminalFramePair) { (*self).headerRows, (*self).footerRows } : (TerminalFramePair) { 0u, 0u };
 }
 bool TerminalFrame_setBackground(TerminalFrame *self, const TerminalImage *image) {
     if (self == nullptr) {
@@ -209,14 +207,11 @@ const TerminalImage *TerminalFrame_getBackground(const TerminalFrame *self) {
     return self ? (*self).background : nullptr;
 }
 
-void TerminalFrame_getLayout(const TerminalFrame *self, const TerminalCanvas *root,
-                             size_t *outLeft, size_t *outRight, bool *outRails) {
+TerminalFrameLayout TerminalFrame_getLayout(const TerminalFrame *self, const TerminalCanvas *root) {
     FrameGeometry g = {0};
     if (self != nullptr && TerminalCanvas_isValid(root))
         g = frameGeometry(self, root);
-    if (outLeft) *outLeft = g.left;
-    if (outRight) *outRight = g.right;
-    if (outRails) *outRails = g.rails;
+    return (TerminalFrameLayout) { g.left, g.right, g.rails };
 }
 
 void TerminalFrame_paintBackground(const TerminalFrame *self, TerminalCanvas *root) {
@@ -303,28 +298,15 @@ void TerminalFrame_drawRules(const TerminalFrame *self, TerminalCanvas *root, Te
     }
 }
 
-bool TerminalFrame_toString(const TerminalFrame *self, char *dest, size_t cap, bool *outTruncated) {
-    if (outTruncated != nullptr)
-        *outTruncated = false;
-    if (dest == nullptr || cap == 0) {
-        if (outTruncated != nullptr)
-            *outTruncated = true;
-        THROW("TerminalFrame projection: missing destination");
-        return false;
-    }
-    int n = self ? snprintf(dest, cap,
-        "TerminalFrame{left=%zu,right=%zu,header=%zu,footer=%zu,background=%d}",
-        (*self).leftWidth, (*self).rightWidth, (*self).headerRows, (*self).footerRows,
-        (*self).background != nullptr)
-        : snprintf(dest, cap, "nullptr");
-    bool cut = n < 0 || (size_t) n >= cap;
-    if (outTruncated != nullptr)
-        *outTruncated = cut;
-    if (cut)
-        THROW("TerminalFrame projection: truncated at %zu bytes", cap);
-    return !cut;
+TerminalProjection TerminalFrame_toString(const TerminalFrame *self) {
+    return TerminalFrame_toStringStruct(self);
 }
 
-bool TerminalFrame_toStringStruct(const TerminalFrame *self, char *dest, size_t cap, bool *outTruncated) {
-    return TerminalFrame_toString(self, dest, cap, outTruncated);
+TerminalProjection TerminalFrame_toStringStruct(const TerminalFrame *self) {
+    if (self == nullptr)
+        return TerminalProjection_format("nullptr");
+    return TerminalProjection_format(
+        "TerminalFrame{left=%zu,right=%zu,header=%zu,footer=%zu,background=%d}",
+        (*self).leftWidth, (*self).rightWidth, (*self).headerRows, (*self).footerRows,
+        (*self).background != nullptr);
 }

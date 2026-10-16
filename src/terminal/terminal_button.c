@@ -34,10 +34,7 @@
  * Input: bool TerminalButton_key(TerminalButton *self, TerminalKey key)
  *   bool TerminalButton_click(TerminalButton *self, size_t x, size_t y)
  * Painting: bool TerminalButton_render(const TerminalButton *self, Terminal *terminal)
- * Projections: bool TerminalButton_toString(const TerminalButton *self,
- *     char *dest, size_t cap, bool *outTruncated)
- *   bool TerminalButton_toStringStruct(const TerminalButton *self,
- *     char *dest, size_t cap, bool *outTruncated)
+ * Projections: TerminalProjection TerminalButton_toString/toStringStruct(self)
  * PRIVATE HELPERS: validLabel(label) checks printable ASCII/size arithmetic.
  * CONTRACT: externally serialized; borrowed label must remain immutable/live.
  * Default empty label at 0,0, unfocused/enabled. Disabling clears focus; setting
@@ -83,11 +80,8 @@ bool TerminalButton_setPosition(TerminalButton *self, size_t x, size_t y) {
     (*self).y = y;
     return true;
 }
-void TerminalButton_getPosition(const TerminalButton *self, size_t *outX, size_t *outY) {
-    if (outX != nullptr)
-        *outX = self ? (*self).x : 0;
-    if (outY != nullptr)
-        *outY = self ? (*self).y : 0;
+TerminalButtonPosition TerminalButton_getPosition(const TerminalButton *self) {
+    return self ? (TerminalButtonPosition) { (*self).x, (*self).y } : (TerminalButtonPosition) { 0u, 0u };
 }
 void TerminalButton_setFocused(TerminalButton *self, bool focused) {
     if (self == nullptr) {
@@ -143,24 +137,12 @@ bool TerminalButton_render(const TerminalButton *self, Terminal *terminal) {
         && Terminal_text(terminal, (*self).x + 1, (*self).y, (*self).label, length)
         && Terminal_text(terminal, (*self).x + 1 + length, (*self).y, right, 1);
 }
-bool TerminalButton_toString(const TerminalButton *self, char *dest, size_t cap, bool *outTruncated) {
-    return TerminalButton_toStringStruct(self, dest, cap, outTruncated);
+TerminalProjection TerminalButton_toString(const TerminalButton *self) {
+    return TerminalButton_toStringStruct(self);
 }
-bool TerminalButton_toStringStruct(const TerminalButton *self, char *dest, size_t cap, bool *outTruncated) {
-    if (outTruncated != nullptr)
-        *outTruncated = false;
-    if (dest == nullptr || cap == 0) {
-        if (outTruncated != nullptr)
-            *outTruncated = true;
-        THROW("TerminalButton projection: missing destination");
-        return false;
-    }
-    int n = self ? snprintf(dest, cap, "TerminalButton{label=<borrowed>,x=%zu,y=%zu,focused=%d,enabled=%d}",
-        (*self).x, (*self).y, (*self).focused, (*self).enabled) : snprintf(dest, cap, "nullptr");
-    bool cut = n < 0 || (size_t) n >= cap;
-    if (outTruncated != nullptr)
-        *outTruncated = cut;
-    if (cut)
-        THROW("TerminalButton projection: truncated at %zu bytes", cap);
-    return !cut;
+TerminalProjection TerminalButton_toStringStruct(const TerminalButton *self) {
+    if (self == nullptr)
+        return TerminalProjection_format("nullptr");
+    return TerminalProjection_format("TerminalButton{label=<borrowed>,x=%zu,y=%zu,focused=%d,enabled=%d}",
+        (*self).x, (*self).y, (*self).focused, (*self).enabled);
 }

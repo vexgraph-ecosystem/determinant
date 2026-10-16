@@ -6,6 +6,7 @@
 #include <stdint.h>
 
 #include "terminal/terminal_canvas.h"
+#include "terminal/terminal_projection.h"
 #include "terminal/terminal_image.h"
 #include "c23/constructor.h"
 
@@ -47,6 +48,8 @@ typedef struct TerminalRule {
     // CUT endpoints for a rule that stops short (0 => a plain space).
     uint32_t cutLeft, cutRight;
 } TerminalRule;
+typedef struct TerminalFramePair { size_t first; size_t second; } TerminalFramePair;
+typedef struct TerminalFrameLayout { size_t left; size_t right; bool rails; } TerminalFrameLayout;
 
 TerminalRule TerminalRule_0(void);                                    // connector, solid ASCII
 TerminalRule TerminalRule_2(uint32_t horizontal, uint32_t vertical);  // custom glyphs
@@ -80,15 +83,14 @@ TerminalFrame TerminalFrame_2(size_t leftWidth, size_t rightWidth);
 #define TerminalFrame_zero() TerminalFrame_0()
 
 bool TerminalFrame_setRails(TerminalFrame *self, size_t leftWidth, size_t rightWidth);
-void TerminalFrame_getRails(const TerminalFrame *self, size_t *outLeft, size_t *outRight);
+TerminalFramePair TerminalFrame_getRails(const TerminalFrame *self);
 bool TerminalFrame_setBands(TerminalFrame *self, size_t headerRows, size_t footerRows);
-void TerminalFrame_getBands(const TerminalFrame *self, size_t *outHeader, size_t *outFooter);
+TerminalFramePair TerminalFrame_getBands(const TerminalFrame *self);
 bool TerminalFrame_setBackground(TerminalFrame *self, const TerminalImage *image);
 const TerminalImage *TerminalFrame_getBackground(const TerminalFrame *self);
 // Rows/columns actually used, given a root size (rails may collapse to zero on a
 // narrow terminal so the centre keeps at least one column).
-void TerminalFrame_getLayout(const TerminalFrame *self, const TerminalCanvas *root,
-                             size_t *outLeft, size_t *outRight, bool *outRails);
+TerminalFrameLayout TerminalFrame_getLayout(const TerminalFrame *self, const TerminalCanvas *root);
 
 // Paint the borrowed background image across the whole root (no-op when none).
 void TerminalFrame_paintBackground(const TerminalFrame *self, TerminalCanvas *root);
@@ -104,9 +106,9 @@ TerminalCanvas TerminalFrame_footer(const TerminalFrame *self, const TerminalCan
 // rail columns, using the frame's TerminalRule connector set.
 void TerminalFrame_drawRules(const TerminalFrame *self, TerminalCanvas *root, TerminalPen rule);
 bool TerminalFrame_setRule(TerminalFrame *self, TerminalRule rule);
-void TerminalFrame_getRule(const TerminalFrame *self, TerminalRule *outRule);
+TerminalRule TerminalFrame_getRule(const TerminalFrame *self);
 
-bool TerminalFrame_toString(const TerminalFrame *self, char *dest, size_t cap, bool *outTruncated);
-bool TerminalFrame_toStringStruct(const TerminalFrame *self, char *dest, size_t cap, bool *outTruncated);
+TerminalProjection TerminalFrame_toString(const TerminalFrame *self);
+TerminalProjection TerminalFrame_toStringStruct(const TerminalFrame *self);
 
 #endif

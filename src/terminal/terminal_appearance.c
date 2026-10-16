@@ -26,7 +26,7 @@
  * Config: set/getRule, set/getColors
  * Apply: TerminalAppearance_applyTo(self, frame),
  *   TerminalAppearance_drawRule(self, canvas, ly, pen)
- * Projections: bool TerminalAppearance_toString/toStringStruct(...)
+ * Projections: TerminalProjection TerminalAppearance_toString/toStringStruct(self)
  * CONTRACT: an unknown name or out-of-range index yields the default; null self
  * is rejected; apply/draw no-op on null targets; no allocation, no logging.
  * ======================================================================== */
@@ -114,8 +114,8 @@ bool TerminalAppearance_setRule(TerminalAppearance *self, TerminalRule rule) {
     (*self).rule = rule;
     return true;
 }
-void TerminalAppearance_getRule(const TerminalAppearance *self, TerminalRule *outRule) {
-    if (outRule) *outRule = self ? (*self).rule : TerminalRule_0();
+TerminalRule TerminalAppearance_getRule(const TerminalAppearance *self) {
+    return self ? (*self).rule : TerminalRule_0();
 }
 bool TerminalAppearance_setColors(TerminalAppearance *self, uint32_t accent, uint32_t muted,
                                   uint32_t text, uint32_t error) {
@@ -126,12 +126,10 @@ bool TerminalAppearance_setColors(TerminalAppearance *self, uint32_t accent, uin
     (*self).colorError = error;
     return true;
 }
-void TerminalAppearance_getColors(const TerminalAppearance *self, uint32_t *outAccent,
-                                  uint32_t *outMuted, uint32_t *outText, uint32_t *outError) {
-    if (outAccent) *outAccent = self ? (*self).colorAccent : TERMINAL_COLOR_DEFAULT;
-    if (outMuted) *outMuted = self ? (*self).colorMuted : TERMINAL_COLOR_DEFAULT;
-    if (outText) *outText = self ? (*self).colorText : TERMINAL_COLOR_DEFAULT;
-    if (outError) *outError = self ? (*self).colorError : TERMINAL_COLOR_DEFAULT;
+TerminalAppearanceColors TerminalAppearance_getColors(const TerminalAppearance *self) {
+    if (!self)
+        return (TerminalAppearanceColors) { TERMINAL_COLOR_DEFAULT, TERMINAL_COLOR_DEFAULT, TERMINAL_COLOR_DEFAULT, TERMINAL_COLOR_DEFAULT };
+    return (TerminalAppearanceColors) { (*self).colorAccent, (*self).colorMuted, (*self).colorText, (*self).colorError };
 }
 
 void TerminalAppearance_applyTo(const TerminalAppearance *self, TerminalFrame *frame) {
@@ -147,28 +145,15 @@ void TerminalAppearance_drawRule(const TerminalAppearance *self, TerminalCanvas 
     TerminalRule_draw(&(*self).rule, canvas, ly, pen);
 }
 
-bool TerminalAppearance_toString(const TerminalAppearance *self, char *dest, size_t cap, bool *outTruncated) {
-    if (outTruncated != nullptr)
-        *outTruncated = false;
-    if (dest == nullptr || cap == 0) {
-        if (outTruncated != nullptr)
-            *outTruncated = true;
-        THROW("TerminalAppearance projection: missing destination");
-        return false;
-    }
-    int n = self ? snprintf(dest, cap,
-        "TerminalAppearance{h=U+%04X,v=U+%04X,junction=U+%04X,stripe=U+%04X,every=%zu,accent=0x%08X}",
-        (*self).rule.horizontal, (*self).rule.vertical, (*self).rule.junction,
-        (*self).rule.stripe, (*self).rule.stripeEvery, (*self).colorAccent)
-        : snprintf(dest, cap, "nullptr");
-    bool cut = n < 0 || (size_t) n >= cap;
-    if (outTruncated != nullptr)
-        *outTruncated = cut;
-    if (cut)
-        THROW("TerminalAppearance projection: truncated at %zu bytes", cap);
-    return !cut;
+TerminalProjection TerminalAppearance_toString(const TerminalAppearance *self) {
+    return TerminalAppearance_toStringStruct(self);
 }
 
-bool TerminalAppearance_toStringStruct(const TerminalAppearance *self, char *dest, size_t cap, bool *outTruncated) {
-    return TerminalAppearance_toString(self, dest, cap, outTruncated);
+TerminalProjection TerminalAppearance_toStringStruct(const TerminalAppearance *self) {
+    if (self == nullptr)
+        return TerminalProjection_format("nullptr");
+    return TerminalProjection_format(
+        "TerminalAppearance{h=U+%04X,v=U+%04X,junction=U+%04X,stripe=U+%04X,every=%zu,accent=0x%08X}",
+        (*self).rule.horizontal, (*self).rule.vertical, (*self).rule.junction,
+        (*self).rule.stripe, (*self).rule.stripeEvery, (*self).colorAccent);
 }

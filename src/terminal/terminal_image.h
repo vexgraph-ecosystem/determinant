@@ -6,6 +6,7 @@
 #include <stdint.h>
 
 #include "terminal/terminal_canvas.h"
+#include "terminal/terminal_projection.h"
 #include "terminal/terminal_color.h"
 #include "c23/constructor.h"
 
@@ -64,6 +65,7 @@ typedef struct TerminalImage {
                             // (default 100). Lower reads as a texture behind the
                             // picture instead of a wall in front of it.
 } TerminalImage;
+typedef struct TerminalImageColorRamp { const uint32_t *data; size_t count; } TerminalImageColorRamp;
 
 TerminalImage TerminalImage_0(void);
 TerminalImage TerminalImage_3(const uint8_t *pixels, size_t width, size_t height);
@@ -85,7 +87,7 @@ void        TerminalImage_setColor(TerminalImage *self, bool color);
 bool        TerminalImage_hasColor(const TerminalImage *self);
 // Palette treatment: luminance indexes `ramp` (low→high). NULL clears it.
 bool        TerminalImage_setColorRamp(TerminalImage *self, const uint32_t *ramp, size_t count);
-const uint32_t *TerminalImage_getColorRamp(const TerminalImage *self, size_t *outCount);
+TerminalImageColorRamp TerminalImage_getColorRamp(const TerminalImage *self);
 // Deterministic per-cell shade scatter (0 = flat). Seed makes it reproducible.
 void        TerminalImage_setJitter(TerminalImage *self, uint8_t jitter, uint32_t seed);
 uint8_t     TerminalImage_getJitter(const TerminalImage *self);
@@ -96,7 +98,7 @@ uint32_t    TerminalImage_getJitterSeed(const TerminalImage *self);
 void        TerminalImage_setPaletteScatter(TerminalImage *self, uint8_t steps);
 uint8_t     TerminalImage_getPaletteScatter(const TerminalImage *self);
 // Named ramps: a purple mix for a mono mask (the `>w<` badge look).
-const uint32_t *TerminalImage_rampPurple(size_t *outCount);
+TerminalImageColorRamp TerminalImage_rampPurple(void);
 void        TerminalImage_setSkipTransparent(TerminalImage *self, bool skip);
 bool        TerminalImage_skipsTransparent(const TerminalImage *self);
 void        TerminalImage_setInvert(TerminalImage *self, bool invert);
@@ -127,11 +129,18 @@ uint8_t     TerminalImage_getNoiseDensity(const TerminalImage *self);
 uint8_t TerminalImage_luminance(uint8_t r, uint8_t g, uint8_t b);
 // The glyph this image maps a luminance to.
 char TerminalImage_glyph(const TerminalImage *self, uint8_t luminance);
+typedef struct TerminalImageSample {
+    bool valid;
+    uint8_t red;
+    uint8_t green;
+    uint8_t blue;
+    uint8_t alpha;
+} TerminalImageSample;
+
 // Average the source block covering one output cell; alpha is the max of the
 // block so a partially transparent cell still reads as opaque.
-bool TerminalImage_sampleCell(const TerminalImage *self, size_t lx, size_t ly,
-                              size_t outWidth, size_t outHeight,
-                              uint8_t *outR, uint8_t *outG, uint8_t *outB, uint8_t *outA);
+TerminalImageSample TerminalImage_sampleCell(const TerminalImage *self, size_t lx, size_t ly,
+                                             size_t outWidth, size_t outHeight);
 
 // Rasterise at native scale (1 source pixel = 1 cell) at (x, y), clipped.
 void TerminalImage_render(const TerminalImage *self, TerminalCanvas *canvas, size_t x, size_t y);
@@ -144,7 +153,7 @@ void TerminalImage_renderFit(const TerminalImage *self, TerminalCanvas *canvas);
 // never squashed to the panel). This is the one for a badge or a logo.
 void TerminalImage_renderContain(const TerminalImage *self, TerminalCanvas *canvas);
 
-bool TerminalImage_toString(const TerminalImage *self, char *dest, size_t cap, bool *outTruncated);
-bool TerminalImage_toStringStruct(const TerminalImage *self, char *dest, size_t cap, bool *outTruncated);
+TerminalProjection TerminalImage_toString(const TerminalImage *self);
+TerminalProjection TerminalImage_toStringStruct(const TerminalImage *self);
 
 #endif

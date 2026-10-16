@@ -5,6 +5,7 @@
 #include <stddef.h>
 
 #include "terminal/terminal_canvas.h"
+#include "terminal/terminal_projection.h"
 #include "c23/constructor.h"
 
 // terminal/terminal_text_view.h — a bare, generic text viewport.
@@ -20,6 +21,7 @@ typedef struct TerminalTextView {
     bool tail;                  // keep the newest line visible (default true)
     TerminalPen pen;
 } TerminalTextView;
+typedef struct TerminalTextViewLines { const char *const *data; size_t count; } TerminalTextViewLines;
 
 TerminalTextView TerminalTextView_0(void);
 TerminalTextView TerminalTextView_2(const char *const *lines, size_t count);
@@ -27,7 +29,7 @@ TerminalTextView TerminalTextView_2(const char *const *lines, size_t count);
 #define TerminalTextView_zero() TerminalTextView_0()
 
 bool TerminalTextView_setLines(TerminalTextView *self, const char *const *lines, size_t count);
-void TerminalTextView_getLines(const TerminalTextView *self, const char *const **outLines, size_t *outCount);
+TerminalTextViewLines TerminalTextView_getLines(const TerminalTextView *self);
 bool TerminalTextView_setScroll(TerminalTextView *self, size_t scroll);
 size_t TerminalTextView_getScroll(const TerminalTextView *self);
 void TerminalTextView_setTail(TerminalTextView *self, bool tail);
@@ -39,7 +41,7 @@ bool TerminalTextView_scrollBy(TerminalTextView *self, long delta, size_t visibl
 
 void TerminalTextView_render(const TerminalTextView *self, TerminalCanvas *canvas);
 
-bool TerminalTextView_toString(const TerminalTextView *self, char *dest, size_t cap, bool *outTruncated);
-bool TerminalTextView_toStringStruct(const TerminalTextView *self, char *dest, size_t cap, bool *outTruncated);
+TerminalProjection TerminalTextView_toString(const TerminalTextView *self);
+TerminalProjection TerminalTextView_toStringStruct(const TerminalTextView *self);
 
 #endif

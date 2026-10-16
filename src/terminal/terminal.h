@@ -1,6 +1,7 @@
 #ifndef DETERMINANT_TERMINAL_H
 #define DETERMINANT_TERMINAL_H
 #include "cli/output.h"
+#include "terminal/terminal_projection.h"
 #include "c23/constructor.h"
 #include <stdint.h>
 // Wire/ABI identity; changes require a new explicit admission version.
@@ -66,6 +67,6 @@ const char *Terminal_getCells(const Terminal *self);
 void *Terminal_getResidentState(const Terminal *self);
 TerminalModule Terminal_getModule(const Terminal *self);
 bool Terminal_free(Terminal *self);
-bool Terminal_toString(const Terminal *self, char *dest, size_t cap, bool *outTruncated);
-bool Terminal_toStringStruct(const Terminal *self, char *dest, size_t cap, bool *outTruncated);
+TerminalProjection Terminal_toString(const Terminal *self);
+TerminalProjection Terminal_toStringStruct(const Terminal *self);
 #endif

@@ -24,7 +24,7 @@
  * Config: set/getLines, set/getScroll, setTail/isTail, set/getPen
  * Navigation: bool TerminalTextView_scrollBy(self, delta, visibleRows)
  * Render: TerminalTextView_render(self, canvas)
- * Projections: bool TerminalTextView_toString/toStringStruct(...)
+ * Projections: TerminalProjection TerminalTextView_toString/toStringStruct(self)
  * CONTRACT: null/invalid canvas no-ops; lines past the region clip; a null line
  * renders blank; render never allocates or logs.
  * ======================================================================== */
@@ -52,9 +52,9 @@ bool TerminalTextView_setLines(TerminalTextView *self, const char *const *lines,
     (*self).count = count;
     return true;
 }
-void TerminalTextView_getLines(const TerminalTextView *self, const char *const **outLines, size_t *outCount) {
-    if (outLines) *outLines = self ? (*self).lines : nullptr;
-    if (outCount) *outCount = self ? (*self).count : 0;
+TerminalTextViewLines TerminalTextView_getLines(const TerminalTextView *self) {
+    return self ? (TerminalTextViewLines) { (*self).lines, (*self).count }
+                : (TerminalTextViewLines) { nullptr, 0u };
 }
 bool TerminalTextView_setScroll(TerminalTextView *self, size_t scroll) {
     if (self == nullptr) { THROW("TerminalTextView scroll: null"); return false; }
@@ -100,26 +100,13 @@ void TerminalTextView_render(const TerminalTextView *self, TerminalCanvas *canva
     }
 }
 
-bool TerminalTextView_toString(const TerminalTextView *self, char *dest, size_t cap, bool *outTruncated) {
-    if (outTruncated != nullptr)
-        *outTruncated = false;
-    if (dest == nullptr || cap == 0) {
-        if (outTruncated != nullptr)
-            *outTruncated = true;
-        THROW("TerminalTextView projection: missing destination");
-        return false;
-    }
-    int n = self ? snprintf(dest, cap, "TerminalTextView{count=%zu,scroll=%zu,tail=%d}",
-                            (*self).count, (*self).scroll, (*self).tail)
-                 : snprintf(dest, cap, "nullptr");
-    bool cut = n < 0 || (size_t) n >= cap;
-    if (outTruncated != nullptr)
-        *outTruncated = cut;
-    if (cut)
-        THROW("TerminalTextView projection: truncated at %zu bytes", cap);
-    return !cut;
+TerminalProjection TerminalTextView_toString(const TerminalTextView *self) {
+    return TerminalTextView_toStringStruct(self);
 }
 
-bool TerminalTextView_toStringStruct(const TerminalTextView *self, char *dest, size_t cap, bool *outTruncated) {
-    return TerminalTextView_toString(self, dest, cap, outTruncated);
+TerminalProjection TerminalTextView_toStringStruct(const TerminalTextView *self) {
+    if (self == nullptr)
+        return TerminalProjection_format("nullptr");
+    return TerminalProjection_format("TerminalTextView{count=%zu,scroll=%zu,tail=%d}",
+                                     (*self).count, (*self).scroll, (*self).tail);
 }

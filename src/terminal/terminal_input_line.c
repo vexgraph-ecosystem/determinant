@@ -26,7 +26,7 @@
  * Editing: bool add(self, ch), bool backspace(self), void clear(self)
  * Queries: size_t TerminalInputLine_length(self)
  * Render: TerminalInputLine_render(self, canvas)
- * Projections: bool TerminalInputLine_toString/toStringStruct(...)
+ * Projections: TerminalProjection TerminalInputLine_toString/toStringStruct(self)
  * CONTRACT: null/unbound operations reject; add refuses (loud, counted by the
  * caller via the false result) at capacity and on non-printable input; render
  * clips and never allocates or logs.
@@ -76,9 +76,9 @@ const char *TerminalInputLine_getPrefix(const TerminalInputLine *self) {
 void TerminalInputLine_setPens(TerminalInputLine *self, TerminalPen prefixPen, TerminalPen textPen) {
     if (self != nullptr) { (*self).prefixPen = prefixPen; (*self).textPen = textPen; }
 }
-void TerminalInputLine_getPens(const TerminalInputLine *self, TerminalPen *outPrefix, TerminalPen *outText) {
-    if (outPrefix) *outPrefix = self ? (*self).prefixPen : TerminalPen_0();
-    if (outText) *outText = self ? (*self).textPen : TerminalPen_0();
+TerminalInputLinePens TerminalInputLine_getPens(const TerminalInputLine *self) {
+    return self ? (TerminalInputLinePens) { (*self).prefixPen, (*self).textPen }
+                : (TerminalInputLinePens) { TerminalPen_0(), TerminalPen_0() };
 }
 
 bool TerminalInputLine_add(TerminalInputLine *self, int character) {
@@ -117,27 +117,14 @@ void TerminalInputLine_render(const TerminalInputLine *self, TerminalCanvas *can
         TerminalCanvas_text(canvas, prefixLen, 0, (*self).buffer, (*self).length, (*self).textPen);
 }
 
-bool TerminalInputLine_toString(const TerminalInputLine *self, char *dest, size_t cap, bool *outTruncated) {
-    if (outTruncated != nullptr)
-        *outTruncated = false;
-    if (dest == nullptr || cap == 0) {
-        if (outTruncated != nullptr)
-            *outTruncated = true;
-        THROW("TerminalInputLine projection: missing destination");
-        return false;
-    }
-    int n = self ? snprintf(dest, cap, "TerminalInputLine{bound=%d,length=%zu,capacity=%zu,prefix=\"%s\"}",
-                            (*self).buffer != nullptr, (*self).length, (*self).capacity,
-                            TerminalInputLine_getPrefix(self))
-                 : snprintf(dest, cap, "nullptr");
-    bool cut = n < 0 || (size_t) n >= cap;
-    if (outTruncated != nullptr)
-        *outTruncated = cut;
-    if (cut)
-        THROW("TerminalInputLine projection: truncated at %zu bytes", cap);
-    return !cut;
+TerminalProjection TerminalInputLine_toString(const TerminalInputLine *self) {
+    return TerminalInputLine_toStringStruct(self);
 }
 
-bool TerminalInputLine_toStringStruct(const TerminalInputLine *self, char *dest, size_t cap, bool *outTruncated) {
-    return TerminalInputLine_toString(self, dest, cap, outTruncated);
+TerminalProjection TerminalInputLine_toStringStruct(const TerminalInputLine *self) {
+    if (self == nullptr)
+        return TerminalProjection_format("nullptr");
+    return TerminalProjection_format("TerminalInputLine{bound=%d,length=%zu,capacity=%zu,prefix=\"%s\"}",
+                                     (*self).buffer != nullptr, (*self).length, (*self).capacity,
+                                     TerminalInputLine_getPrefix(self));
 }

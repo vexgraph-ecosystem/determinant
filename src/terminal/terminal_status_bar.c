@@ -21,7 +21,7 @@
  * Constructors: TerminalStatusBar_0(void), TerminalStatusBar_1(left)
  * Config: set/getLeft, set/getRight, set/getPens
  * Render: TerminalStatusBar_render(self, canvas)
- * Projections: bool TerminalStatusBar_toString/toStringStruct(...)
+ * Projections: TerminalProjection TerminalStatusBar_toString/toStringStruct(self)
  * CONTRACT: null/invalid canvas no-ops; the left string clips at the region
  * width; the right string is dropped when it would touch the left; no
  * allocation, no logging.
@@ -55,9 +55,9 @@ const char *TerminalStatusBar_getRight(const TerminalStatusBar *self) { return s
 void TerminalStatusBar_setPens(TerminalStatusBar *self, TerminalPen leftPen, TerminalPen rightPen) {
     if (self != nullptr) { (*self).leftPen = leftPen; (*self).rightPen = rightPen; }
 }
-void TerminalStatusBar_getPens(const TerminalStatusBar *self, TerminalPen *outLeft, TerminalPen *outRight) {
-    if (outLeft) *outLeft = self ? (*self).leftPen : TerminalPen_0();
-    if (outRight) *outRight = self ? (*self).rightPen : TerminalPen_0();
+TerminalStatusBarPens TerminalStatusBar_getPens(const TerminalStatusBar *self) {
+    return self ? (TerminalStatusBarPens) { (*self).leftPen, (*self).rightPen }
+                : (TerminalStatusBarPens) { TerminalPen_0(), TerminalPen_0() };
 }
 
 void TerminalStatusBar_render(const TerminalStatusBar *self, TerminalCanvas *canvas) {
@@ -76,26 +76,14 @@ void TerminalStatusBar_render(const TerminalStatusBar *self, TerminalCanvas *can
         TerminalCanvas_text(canvas, width - rightLen, 0, (*self).right, rightLen, (*self).rightPen);
 }
 
-bool TerminalStatusBar_toString(const TerminalStatusBar *self, char *dest, size_t cap, bool *outTruncated) {
-    if (outTruncated != nullptr)
-        *outTruncated = false;
-    if (dest == nullptr || cap == 0) {
-        if (outTruncated != nullptr)
-            *outTruncated = true;
-        THROW("TerminalStatusBar projection: missing destination");
-        return false;
-    }
-    int n = self ? snprintf(dest, cap, "TerminalStatusBar{left=\"%s\",right=\"%s\"}",
-                            (*self).left ? (*self).left : "", (*self).right ? (*self).right : "")
-                 : snprintf(dest, cap, "nullptr");
-    bool cut = n < 0 || (size_t) n >= cap;
-    if (outTruncated != nullptr)
-        *outTruncated = cut;
-    if (cut)
-        THROW("TerminalStatusBar projection: truncated at %zu bytes", cap);
-    return !cut;
+TerminalProjection TerminalStatusBar_toString(const TerminalStatusBar *self) {
+    return TerminalStatusBar_toStringStruct(self);
 }
 
-bool TerminalStatusBar_toStringStruct(const TerminalStatusBar *self, char *dest, size_t cap, bool *outTruncated) {
-    return TerminalStatusBar_toString(self, dest, cap, outTruncated);
+TerminalProjection TerminalStatusBar_toStringStruct(const TerminalStatusBar *self) {
+    if (self == nullptr)
+        return TerminalProjection_format("nullptr");
+    return TerminalProjection_format("TerminalStatusBar{left=\"%s\",right=\"%s\"}",
+                                     (*self).left ? (*self).left : "",
+                                     (*self).right ? (*self).right : "");
 }

@@ -34,10 +34,10 @@
  * Queries: bool TerminalImage_isValid, getWidth/getHeight
  * Mapping: uint8_t TerminalImage_luminance(r,g,b)
  *   char TerminalImage_glyph(self, luminance)
- *   bool TerminalImage_sampleCell(self, lx, ly, outW, outH, outR/G/B/A)
+ *   TerminalImageSample TerminalImage_sampleCell(self, lx, ly, outW, outH)
  * Render: TerminalImage_render(self, canvas, x, y)      (native 1:1)
  *   TerminalImage_renderFit(self, canvas)               (cover the region)
- * Projections: bool TerminalImage_toString/toStringStruct(...)
+ * Projections: TerminalProjection TerminalImage_toString/toStringStruct(self)
  * CONTRACT: an invalid image (null/zero pixels or extent) draws nothing; a
  * transparent cell with skipTransparent leaves the canvas untouched; render
  * clips and never allocates or logs. Sampling is pure and deterministic.
@@ -105,9 +105,9 @@ bool TerminalImage_setColorRamp(TerminalImage *self, const uint32_t *ramp, size_
     (*self).colorRampCount = (count != 0) ? count : 0;
     return true;
 }
-const uint32_t *TerminalImage_getColorRamp(const TerminalImage *self, size_t *outCount) {
-    if (outCount) *outCount = self ? (*self).colorRampCount : 0;
-    return self ? (*self).colorRamp : nullptr;
+TerminalImageColorRamp TerminalImage_getColorRamp(const TerminalImage *self) {
+    return self ? (TerminalImageColorRamp) { (*self).colorRamp, (*self).colorRampCount }
+                : (TerminalImageColorRamp) { nullptr, 0u };
 }
 void TerminalImage_setJitter(TerminalImage *self, uint8_t jitter, uint32_t seed) {
     if (self == nullptr) return;
@@ -133,9 +133,8 @@ static const uint32_t PURPLE_RAMP[] = {
     TERMINAL_RGB(0xE0, 0xC6, 0xF4),
     TERMINAL_RGB(0xF2, 0xE6, 0xFF),
 };
-const uint32_t *TerminalImage_rampPurple(size_t *outCount) {
-    if (outCount) *outCount = sizeof(PURPLE_RAMP) / sizeof(PURPLE_RAMP[0]);
-    return PURPLE_RAMP;
+TerminalImageColorRamp TerminalImage_rampPurple(void) {
+    return (TerminalImageColorRamp) { PURPLE_RAMP, sizeof(PURPLE_RAMP) / sizeof(PURPLE_RAMP[0]) };
 }
 
 static uint8_t shiftChannel(uint8_t value, int delta) {
@@ -278,11 +277,11 @@ char TerminalImage_glyph(const TerminalImage *self, uint8_t luminance) {
     return ramp[index];
 }
 
-bool TerminalImage_sampleCell(const TerminalImage *self, size_t lx, size_t ly,
-                              size_t outWidth, size_t outHeight,
-                              uint8_t *outR, uint8_t *outG, uint8_t *outB, uint8_t *outA) {
+TerminalImageSample TerminalImage_sampleCell(const TerminalImage *self, size_t lx, size_t ly,
+                                             size_t outWidth, size_t outHeight) {
+    TerminalImageSample sample = {0};
     if (!TerminalImage_isValid(self) || outWidth == 0 || outHeight == 0)
-        return false;
+        return sample;
     size_t x0 = lx * (*self).width / outWidth;
     size_t x1 = (lx + 1) * (*self).width / outWidth;
     size_t y0 = ly * (*self).height / outHeight;
@@ -304,12 +303,13 @@ bool TerminalImage_sampleCell(const TerminalImage *self, size_t lx, size_t ly,
         }
     }
     if (count == 0)
-        return false;
-    if (outR) *outR = (uint8_t) (sr / count);
-    if (outG) *outG = (uint8_t) (sg / count);
-    if (outB) *outB = (uint8_t) (sb / count);
-    if (outA) *outA = maxA;
-    return true;
+        return sample;
+    sample.valid = true;
+    sample.red = (uint8_t) (sr / count);
+    sample.green = (uint8_t) (sg / count);
+    sample.blue = (uint8_t) (sb / count);
+    sample.alpha = maxA;
+    return sample;
 }
 
 void TerminalImage_render(const TerminalImage *self, TerminalCanvas *canvas, size_t x, size_t y) {
@@ -341,12 +341,12 @@ void TerminalImage_renderFit(const TerminalImage *self, TerminalCanvas *canvas) 
     paintNoiseField(self, canvas, 0, 0, cw, chh);
     for (size_t ly = 0; ly < chh; ++ly) {
         for (size_t lx = 0; lx < cw; ++lx) {
-            uint8_t r = 0, g = 0, b = 0, a = 0;
-            if (!TerminalImage_sampleCell(self, lx, ly, cw, chh, &r, &g, &b, &a))
+            TerminalImageSample sample = TerminalImage_sampleCell(self, lx, ly, cw, chh);
+            if (!sample.valid)
                 continue;
-            if (TerminalImage_skipsTransparent(self) && a == 0)
+            if (TerminalImage_skipsTransparent(self) && sample.alpha == 0)
                 continue;
-            paintCell(self, canvas, lx, ly, lx, ly, r, g, b);
+            paintCell(self, canvas, lx, ly, lx, ly, sample.red, sample.green, sample.blue);
         }
     }
 }
@@ -379,39 +379,27 @@ void TerminalImage_renderContain(const TerminalImage *self, TerminalCanvas *canv
     paintNoiseField(self, canvas, 0, 0, regionW, regionH);
     for (size_t ly = 0; ly < destH; ++ly) {
         for (size_t lx = 0; lx < destW; ++lx) {
-            uint8_t r = 0, g = 0, b = 0, a = 0;
-            if (!TerminalImage_sampleCell(self, lx, ly, destW, destH, &r, &g, &b, &a))
+            TerminalImageSample sample = TerminalImage_sampleCell(self, lx, ly, destW, destH);
+            if (!sample.valid)
                 continue;
-            if (TerminalImage_skipsTransparent(self) && a == 0)
+            if (TerminalImage_skipsTransparent(self) && sample.alpha == 0)
                 continue;
-            paintCell(self, canvas, offsetX + lx, offsetY + ly, lx, ly, r, g, b);
+            paintCell(self, canvas, offsetX + lx, offsetY + ly, lx, ly,
+                      sample.red, sample.green, sample.blue);
         }
     }
 }
 
-bool TerminalImage_toString(const TerminalImage *self, char *dest, size_t cap, bool *outTruncated) {
-    if (outTruncated != nullptr)
-        *outTruncated = false;
-    if (dest == nullptr || cap == 0) {
-        if (outTruncated != nullptr)
-            *outTruncated = true;
-        THROW("TerminalImage projection: missing destination");
-        return false;
-    }
-    int n = self ? snprintf(dest, cap,
+TerminalProjection TerminalImage_toString(const TerminalImage *self) {
+    return TerminalImage_toStringStruct(self);
+}
+
+TerminalProjection TerminalImage_toStringStruct(const TerminalImage *self) {
+    if (self == nullptr)
+        return TerminalProjection_format("nullptr");
+    return TerminalProjection_format(
         "TerminalImage{%zux%zu,ramp=\"%s\",style=0x%02X,color=%d,palette=%zu,jitter=%u,skipTransparent=%d,invert=%d,valid=%d}",
         (*self).width, (*self).height, TerminalImage_getRamp(self), (*self).style,
         (*self).color, (*self).colorRampCount, (*self).jitter, (*self).skipTransparent, (*self).invert,
-        TerminalImage_isValid(self))
-        : snprintf(dest, cap, "nullptr");
-    bool cut = n < 0 || (size_t) n >= cap;
-    if (outTruncated != nullptr)
-        *outTruncated = cut;
-    if (cut)
-        THROW("TerminalImage projection: truncated at %zu bytes", cap);
-    return !cut;
-}
-
-bool TerminalImage_toStringStruct(const TerminalImage *self, char *dest, size_t cap, bool *outTruncated) {
-    return TerminalImage_toString(self, dest, cap, outTruncated);
+        TerminalImage_isValid(self));
 }

@@ -5,6 +5,7 @@
 #include <stddef.h>
 
 #include "terminal/terminal_canvas.h"
+#include "terminal/terminal_projection.h"
 #include "c23/constructor.h"
 
 // terminal/terminal_input_line.h — a bare, generic single-line input.
@@ -24,6 +25,7 @@ typedef struct TerminalInputLine {
     TerminalPen prefixPen;
     TerminalPen textPen;
 } TerminalInputLine;
+typedef struct TerminalInputLinePens { TerminalPen prefix; TerminalPen text; } TerminalInputLinePens;
 
 TerminalInputLine TerminalInputLine_0(void);
 TerminalInputLine TerminalInputLine_2(char *buffer, size_t capacity);
@@ -38,7 +40,7 @@ bool TerminalInputLine_isBound(const TerminalInputLine *self);
 bool TerminalInputLine_setPrefix(TerminalInputLine *self, const char *prefix);
 const char *TerminalInputLine_getPrefix(const TerminalInputLine *self);
 void TerminalInputLine_setPens(TerminalInputLine *self, TerminalPen prefixPen, TerminalPen textPen);
-void TerminalInputLine_getPens(const TerminalInputLine *self, TerminalPen *outPrefix, TerminalPen *outText);
+TerminalInputLinePens TerminalInputLine_getPens(const TerminalInputLine *self);
 
 bool TerminalInputLine_add(TerminalInputLine *self, int character);
 bool TerminalInputLine_backspace(TerminalInputLine *self);
@@ -46,7 +48,7 @@ void TerminalInputLine_clear(TerminalInputLine *self);
 
 void TerminalInputLine_render(const TerminalInputLine *self, TerminalCanvas *canvas);
 
-bool TerminalInputLine_toString(const TerminalInputLine *self, char *dest, size_t cap, bool *outTruncated);
-bool TerminalInputLine_toStringStruct(const TerminalInputLine *self, char *dest, size_t cap, bool *outTruncated);
+TerminalProjection TerminalInputLine_toString(const TerminalInputLine *self);
+TerminalProjection TerminalInputLine_toStringStruct(const TerminalInputLine *self);
 
 #endif

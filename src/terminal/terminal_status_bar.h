@@ -5,6 +5,7 @@
 #include <stddef.h>
 
 #include "terminal/terminal_canvas.h"
+#include "terminal/terminal_projection.h"
 #include "c23/constructor.h"
 
 // terminal/terminal_status_bar.h — a bare, generic one-row status line.
@@ -21,6 +22,7 @@ typedef struct TerminalStatusBar {
     TerminalPen leftPen;
     TerminalPen rightPen;
 } TerminalStatusBar;
+typedef struct TerminalStatusBarPens { TerminalPen left; TerminalPen right; } TerminalStatusBarPens;
 
 TerminalStatusBar TerminalStatusBar_0(void);
 TerminalStatusBar TerminalStatusBar_1(const char *left);
@@ -32,11 +34,11 @@ const char *TerminalStatusBar_getLeft(const TerminalStatusBar *self);
 bool TerminalStatusBar_setRight(TerminalStatusBar *self, const char *right);
 const char *TerminalStatusBar_getRight(const TerminalStatusBar *self);
 void TerminalStatusBar_setPens(TerminalStatusBar *self, TerminalPen leftPen, TerminalPen rightPen);
-void TerminalStatusBar_getPens(const TerminalStatusBar *self, TerminalPen *outLeft, TerminalPen *outRight);
+TerminalStatusBarPens TerminalStatusBar_getPens(const TerminalStatusBar *self);
 
 void TerminalStatusBar_render(const TerminalStatusBar *self, TerminalCanvas *canvas);
 
-bool TerminalStatusBar_toString(const TerminalStatusBar *self, char *dest, size_t cap, bool *outTruncated);
-bool TerminalStatusBar_toStringStruct(const TerminalStatusBar *self, char *dest, size_t cap, bool *outTruncated);
+TerminalProjection TerminalStatusBar_toString(const TerminalStatusBar *self);
+TerminalProjection TerminalStatusBar_toStringStruct(const TerminalStatusBar *self);
 
 #endif

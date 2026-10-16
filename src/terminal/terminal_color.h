@@ -3,7 +3,7 @@
 
 #include <stdint.h>
 
-// Determinant terminal colour — packed 0xRRGGBBAA, the ecosystem's Strict
+// Determinant terminal colour — packed 0xRRGGBBAA, the vexgraph-ecosystem-gitrepo's Strict
 // 0xRRGGBBAA Color Law applied to cells. Red is the high byte, alpha the low
 // byte, so a hex literal reads R,G,B,A left to right and the same value means
 // the same thing in a terminal cell, a graphvex Image or a brush.

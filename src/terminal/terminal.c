@@ -61,10 +61,7 @@
  *   uint64_t Terminal_getGeneration(const Terminal *self)
  *   size_t Terminal_exhaustionCount(const Terminal *self)
  *   bool Terminal_isPaused(const Terminal *self), Terminal_isActive(const Terminal *self)
- * Projections: bool Terminal_toString(const Terminal *self, char *dest,
- *     size_t cap, bool *outTruncated)
- *   bool Terminal_toStringStruct(const Terminal *self, char *dest,
- *     size_t cap, bool *outTruncated)
+ * Projections: TerminalProjection Terminal_toString/toStringStruct(self)
  * CONTRACT: null query defaults; cold invalid operations THROW once; hot
  * clear/present remain quiet. Text admission validates full span before copying.
  * Callback false may have changed caller cells/state: host owns candidate-state
@@ -216,27 +213,14 @@ bool Terminal_free(Terminal *self) {
     *self = Terminal_0();
     return true;
 }
-bool Terminal_toString(const Terminal *self, char *dest, size_t cap, bool *outTruncated) {
-    return Terminal_toStringStruct(self, dest, cap, outTruncated);
+TerminalProjection Terminal_toString(const Terminal *self) {
+    return Terminal_toStringStruct(self);
 }
-bool Terminal_toStringStruct(const Terminal *self, char *dest, size_t cap, bool *outTruncated) {
-    if (outTruncated != nullptr)
-        *outTruncated = false;
-    if (dest == nullptr || cap == 0) {
-        if (outTruncated != nullptr)
-            *outTruncated = true;
-        THROW("Terminal projection: missing destination");
-        return false;
-    }
+TerminalProjection Terminal_toStringStruct(const Terminal *self) {
+    if (self == nullptr)
+        return TerminalProjection_format("nullptr");
     TerminalModule const *module = self ? &(*self).module : nullptr;
-    int n = self ? snprintf(dest, cap, "Terminal{cells=<borrowed>,capacity=%zu,width=%zu,height=%zu,output=%s,hostContext=<opaque>,residentState=<opaque>,module={abi=%u},generation=%llu,refusalCount=%zu,paused=%d,active=%d}",
+    return TerminalProjection_format("Terminal{cells=<borrowed>,capacity=%zu,width=%zu,height=%zu,output=%s,hostContext=<opaque>,residentState=<opaque>,module={abi=%u},generation=%llu,refusalCount=%zu,paused=%d,active=%d}",
         (*self).capacity, (*self).width, (*self).height, (*self).output ? "bound" : "none", (*module).abi,
-        (unsigned long long) (*self).generation, (*self).refusalCount, (*self).paused, (*self).active)
-        : snprintf(dest, cap, "nullptr");
-    bool cut = n < 0 || (size_t) n >= cap;
-    if (outTruncated != nullptr)
-        *outTruncated = cut;
-    if (cut)
-        THROW("Terminal projection: truncated at %zu bytes", cap);
-    return !cut;
+        (unsigned long long) (*self).generation, (*self).refusalCount, (*self).paused, (*self).active);
 }

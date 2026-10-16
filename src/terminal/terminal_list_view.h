@@ -5,6 +5,7 @@
 #include <stddef.h>
 
 #include "terminal/terminal_canvas.h"
+#include "terminal/terminal_projection.h"
 #include "c23/constructor.h"
 
 // terminal/terminal_list_view.h — a bare, generic list.
@@ -25,6 +26,8 @@ typedef struct TerminalListView {
     TerminalPen normal;          // unselected row pen
     TerminalPen selected;        // selected row pen (marker + label)
 } TerminalListView;
+typedef struct TerminalListViewLabels { const char *const *data; size_t count; } TerminalListViewLabels;
+typedef struct TerminalListViewPens { TerminalPen normal; TerminalPen selected; } TerminalListViewPens;
 
 TerminalListView TerminalListView_0(void);
 TerminalListView TerminalListView_2(const char *const *labels, size_t count);
@@ -32,7 +35,7 @@ TerminalListView TerminalListView_2(const char *const *labels, size_t count);
 #define TerminalListView_zero() TerminalListView_0()
 
 bool TerminalListView_setLabels(TerminalListView *self, const char *const *labels, size_t count);
-void TerminalListView_getLabels(const TerminalListView *self, const char *const **outLabels, size_t *outCount);
+TerminalListViewLabels TerminalListView_getLabels(const TerminalListView *self);
 bool TerminalListView_setSelection(TerminalListView *self, size_t selection);
 size_t TerminalListView_getSelection(const TerminalListView *self);
 bool TerminalListView_setScroll(TerminalListView *self, size_t scroll);
@@ -40,13 +43,13 @@ size_t TerminalListView_getScroll(const TerminalListView *self);
 bool TerminalListView_setMarker(TerminalListView *self, const char *marker);
 const char *TerminalListView_getMarker(const TerminalListView *self);
 void TerminalListView_setPens(TerminalListView *self, TerminalPen normal, TerminalPen selected);
-void TerminalListView_getPens(const TerminalListView *self, TerminalPen *outNormal, TerminalPen *outSelected);
+TerminalListViewPens TerminalListView_getPens(const TerminalListView *self);
 // Move the selection within [0, count) and keep it visible; false at an edge.
 bool TerminalListView_move(TerminalListView *self, long delta, size_t visibleRows);
 
 void TerminalListView_render(const TerminalListView *self, TerminalCanvas *canvas);
 
-bool TerminalListView_toString(const TerminalListView *self, char *dest, size_t cap, bool *outTruncated);
-bool TerminalListView_toStringStruct(const TerminalListView *self, char *dest, size_t cap, bool *outTruncated);
+TerminalProjection TerminalListView_toString(const TerminalListView *self);
+TerminalProjection TerminalListView_toStringStruct(const TerminalListView *self);
 
 #endif

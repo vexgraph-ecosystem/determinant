@@ -7,6 +7,7 @@
 
 #include "terminal/terminal_color.h"
 #include "terminal/terminal_style.h"
+#include "terminal/terminal_projection.h"
 #include "c23/constructor.h"
 
 // terminal/terminal_canvas.h — the compositor primitive.
@@ -82,8 +83,19 @@ void TerminalCanvas_hline(TerminalCanvas *self, size_t ly, uint32_t glyph, Termi
 void TerminalCanvas_vline(TerminalCanvas *self, size_t lx, uint32_t glyph, TerminalPen pen);
 void TerminalCanvas_box(TerminalCanvas *self, TerminalPen pen);
 
-// Decode one UTF-8 scalar; returns bytes consumed (0 on malformed input).
-size_t TerminalCanvas_utf8Decode(const char *text, size_t length, uint32_t *outCodepoint);
+typedef struct TerminalCanvasDecodedScalar {
+    uint32_t codepoint;
+    size_t bytes;
+} TerminalCanvasDecodedScalar;
+
+// Decode one UTF-8 scalar; bytes is 0 on malformed input.
+TerminalCanvasDecodedScalar TerminalCanvas_utf8Decode(const char *text, size_t length);
+
+typedef struct TerminalCanvasTextRow {
+    char data[1024];
+    size_t bytes;
+    bool truncated;
+} TerminalCanvasTextRow;
 
 // Write ONE codepoint at a local cell (width-aware: a double-width glyph marks
 // its continuation cell). Use this for glyph tables; `text` decodes UTF-8.
@@ -100,11 +112,10 @@ size_t   TerminalCanvas_getWidth(const TerminalCanvas *self);
 size_t   TerminalCanvas_getHeight(const TerminalCanvas *self);
 bool     TerminalCanvas_hasStylePlane(const TerminalCanvas *self);
 bool     TerminalCanvas_hasColorPlane(const TerminalCanvas *self);
-// Copy a whole region row as text (clipped to the supplied buffer), dest-last.
-bool TerminalCanvas_copyRow(const TerminalCanvas *self, size_t ly, char *dest, size_t cap,
-                            bool *outTruncated);
+// Return one region row as bounded UTF-8 text.
+TerminalCanvasTextRow TerminalCanvas_copyRow(const TerminalCanvas *self, size_t ly);
 
-bool TerminalCanvas_toString(const TerminalCanvas *self, char *dest, size_t cap, bool *outTruncated);
-bool TerminalCanvas_toStringStruct(const TerminalCanvas *self, char *dest, size_t cap, bool *outTruncated);
+TerminalProjection TerminalCanvas_toString(const TerminalCanvas *self);
+TerminalProjection TerminalCanvas_toStringStruct(const TerminalCanvas *self);
 
 #endif

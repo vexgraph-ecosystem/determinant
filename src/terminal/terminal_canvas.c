@@ -38,12 +38,12 @@
  *   size_t getWidth/getHeight
  *   uint32_t glyphAt, uint8_t styleAt, uint32_t fgAt/bgAt
  *   bool hasStylePlane/hasColorPlane
- * Decode: size_t TerminalCanvas_utf8Decode(text, length, outCodepoint)
+ * Decode: TerminalCanvasDecodedScalar TerminalCanvas_utf8Decode(text, length)
  * Regions: TerminalCanvas TerminalCanvas_sub(self, lx, ly, w, h)
  * Primitives: fill(self, glyph, pen), text(self, lx, ly, text, len, pen),
  *   hline(self, ly, glyph, pen), vline(self, lx, glyph, pen), box(self, pen)
- * Projections: bool copyRow(self, ly, dest, cap, outTruncated)
- *   bool toString/toStringStruct(self, dest, cap, outTruncated)
+ * Projections: TerminalCanvasTextRow copyRow(self, ly)
+ *   TerminalProjection toString/toStringStruct(self)
  * CONTRACT: null/invalid canvases no-op; out-of-region coordinates clip; a null
  * plane drops that dimension; malformed UTF-8 becomes '?'; combining marks are
  * not composed (documented shaping gap). No allocation, no logging on any draw.
@@ -115,27 +115,33 @@ size_t TerminalCanvas_widthOf(uint32_t cp) {
     return 1;
 }
 
-size_t TerminalCanvas_utf8Decode(const char *text, size_t length, uint32_t *outCodepoint) {
-    if (text == nullptr || length == 0 || outCodepoint == nullptr)
-        return 0;
+TerminalCanvasDecodedScalar TerminalCanvas_utf8Decode(const char *text, size_t length) {
+    TerminalCanvasDecodedScalar decoded = {0};
+    if (text == nullptr || length == 0)
+        return decoded;
     const unsigned char *p = (const unsigned char*) text;
     unsigned char b0 = p[0];
-    if (b0 < 0x80u) { *outCodepoint = b0; return 1; }
+    if (b0 < 0x80u) {
+        decoded.codepoint = b0;
+        decoded.bytes = 1;
+        return decoded;
+    }
     size_t need;
     uint32_t cp;
     if ((b0 & 0xE0u) == 0xC0u) { need = 1; cp = b0 & 0x1Fu; }
     else if ((b0 & 0xF0u) == 0xE0u) { need = 2; cp = b0 & 0x0Fu; }
     else if ((b0 & 0xF8u) == 0xF0u) { need = 3; cp = b0 & 0x07u; }
-    else return 0;
+    else return decoded;
     if (length < need + 1)
-        return 0;
+        return decoded;
     for (size_t i = 1; i <= need; ++i) {
         if ((p[i] & 0xC0u) != 0x80u)
-            return 0;
+            return decoded;
         cp = (cp << 6) | (p[i] & 0x3Fu);
     }
-    *outCodepoint = cp;
-    return need + 1;
+    decoded.codepoint = cp;
+    decoded.bytes = need + 1;
+    return decoded;
 }
 
 static size_t encodeUtf8(uint32_t cp, char *out) {
@@ -228,8 +234,9 @@ void TerminalCanvas_text(TerminalCanvas *self, size_t lx, size_t ly,
         return;
     size_t at = 0;
     while (at < length && lx < (*self).width) {
-        uint32_t cp = 0;
-        size_t used = TerminalCanvas_utf8Decode(text + at, length - at, &cp);
+        TerminalCanvasDecodedScalar decoded = TerminalCanvas_utf8Decode(text + at, length - at);
+        uint32_t cp = decoded.codepoint;
+        size_t used = decoded.bytes;
         if (used == 0) { cp = '?'; used = 1; }
         putScalar(self, &lx, ly, cp, pen);
         at += used;
@@ -302,62 +309,39 @@ size_t TerminalCanvas_getHeight(const TerminalCanvas *self) { return self ? (*se
 bool TerminalCanvas_hasStylePlane(const TerminalCanvas *self) { return self && (*self).styles != nullptr; }
 bool TerminalCanvas_hasColorPlane(const TerminalCanvas *self) { return self && (*self).fg != nullptr; }
 
-bool TerminalCanvas_copyRow(const TerminalCanvas *self, size_t ly, char *dest, size_t cap,
-                            bool *outTruncated) {
-    if (outTruncated != nullptr)
-        *outTruncated = false;
-    if (dest == nullptr || cap == 0) {
-        if (outTruncated != nullptr)
-            *outTruncated = true;
-        THROW("TerminalCanvas copyRow: missing destination");
-        return false;
-    }
+TerminalCanvasTextRow TerminalCanvas_copyRow(const TerminalCanvas *self, size_t ly) {
+    TerminalCanvasTextRow row = {0};
     if (!TerminalCanvas_isValid(self) || ly >= (*self).height) {
-        dest[0] = '\0';
-        return true;
+        return row;
     }
-    size_t written = 0;
-    bool cut = false;
     for (size_t lx = 0; lx < (*self).width; ++lx) {
         uint32_t cp = TerminalCanvas_glyphAt(self, lx, ly);
         if (cp == 0)                    // wide-glyph continuation cell
             cp = ' ';
         char encoded[4];
         size_t n = encodeUtf8(cp, encoded);
-        if (written + n >= cap) { cut = true; break; }
-        memcpy(dest + written, encoded, n);
-        written += n;
+        if (row.bytes + n >= sizeof row.data) {
+            row.truncated = true;
+            break;
+        }
+        memcpy(row.data + row.bytes, encoded, n);
+        row.bytes += n;
     }
-    dest[written] = '\0';
-    if (outTruncated != nullptr)
-        *outTruncated = cut;
-    return !cut;
+    row.data[row.bytes] = '\0';
+    return row;
 }
 
-bool TerminalCanvas_toString(const TerminalCanvas *self, char *dest, size_t cap, bool *outTruncated) {
-    if (outTruncated != nullptr)
-        *outTruncated = false;
-    if (dest == nullptr || cap == 0) {
-        if (outTruncated != nullptr)
-            *outTruncated = true;
-        THROW("TerminalCanvas projection: missing destination");
-        return false;
-    }
-    int n = self ? snprintf(dest, cap,
+TerminalProjection TerminalCanvas_toString(const TerminalCanvas *self) {
+    return TerminalCanvas_toStringStruct(self);
+}
+
+TerminalProjection TerminalCanvas_toStringStruct(const TerminalCanvas *self) {
+    if (self == nullptr)
+        return TerminalProjection_format("nullptr");
+    return TerminalProjection_format(
         "TerminalCanvas{region=%zux%zu@%zu,%zu,grid=%zux%zu,styles=%s,color=%s,valid=%d}",
         (*self).width, (*self).height, (*self).x, (*self).y,
         (*self).gridWidth, (*self).gridHeight,
         (*self).styles ? "yes" : "none", (*self).fg ? "yes" : "none",
-        TerminalCanvas_isValid(self))
-        : snprintf(dest, cap, "nullptr");
-    bool cut = n < 0 || (size_t) n >= cap;
-    if (outTruncated != nullptr)
-        *outTruncated = cut;
-    if (cut)
-        THROW("TerminalCanvas projection: truncated at %zu bytes", cap);
-    return !cut;
-}
-
-bool TerminalCanvas_toStringStruct(const TerminalCanvas *self, char *dest, size_t cap, bool *outTruncated) {
-    return TerminalCanvas_toString(self, dest, cap, outTruncated);
+        TerminalCanvas_isValid(self));
 }

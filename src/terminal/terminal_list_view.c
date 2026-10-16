@@ -28,7 +28,7 @@
  *   set/getPens
  * Navigation: bool TerminalListView_move(self, delta, visibleRows)
  * Render: TerminalListView_render(self, canvas)
- * Projections: bool TerminalListView_toString/toStringStruct(...)
+ * Projections: TerminalProjection TerminalListView_toString/toStringStruct(self)
  * CONTRACT: null/invalid canvas no-ops; rows past the region clip; a null label
  * renders blank; render never allocates or logs.
  * ======================================================================== */
@@ -57,9 +57,9 @@ bool TerminalListView_setLabels(TerminalListView *self, const char *const *label
     (*self).count = count;
     return true;
 }
-void TerminalListView_getLabels(const TerminalListView *self, const char *const **outLabels, size_t *outCount) {
-    if (outLabels) *outLabels = self ? (*self).labels : nullptr;
-    if (outCount) *outCount = self ? (*self).count : 0;
+TerminalListViewLabels TerminalListView_getLabels(const TerminalListView *self) {
+    return self ? (TerminalListViewLabels) { (*self).labels, (*self).count }
+                : (TerminalListViewLabels) { nullptr, 0u };
 }
 bool TerminalListView_setSelection(TerminalListView *self, size_t selection) {
     if (self == nullptr) { THROW("TerminalListView selection: null"); return false; }
@@ -84,9 +84,9 @@ const char *TerminalListView_getMarker(const TerminalListView *self) {
 void TerminalListView_setPens(TerminalListView *self, TerminalPen normal, TerminalPen selected) {
     if (self != nullptr) { (*self).normal = normal; (*self).selected = selected; }
 }
-void TerminalListView_getPens(const TerminalListView *self, TerminalPen *outNormal, TerminalPen *outSelected) {
-    if (outNormal) *outNormal = self ? (*self).normal : TerminalPen_0();
-    if (outSelected) *outSelected = self ? (*self).selected : TerminalPen_0();
+TerminalListViewPens TerminalListView_getPens(const TerminalListView *self) {
+    return self ? (TerminalListViewPens) { (*self).normal, (*self).selected }
+                : (TerminalListViewPens) { TerminalPen_0(), TerminalPen_0() };
 }
 
 bool TerminalListView_move(TerminalListView *self, long delta, size_t visibleRows) {
@@ -134,27 +134,14 @@ void TerminalListView_render(const TerminalListView *self, TerminalCanvas *canva
     }
 }
 
-bool TerminalListView_toString(const TerminalListView *self, char *dest, size_t cap, bool *outTruncated) {
-    if (outTruncated != nullptr)
-        *outTruncated = false;
-    if (dest == nullptr || cap == 0) {
-        if (outTruncated != nullptr)
-            *outTruncated = true;
-        THROW("TerminalListView projection: missing destination");
-        return false;
-    }
-    int n = self ? snprintf(dest, cap,
-        "TerminalListView{count=%zu,selection=%zu,scroll=%zu,marker=\"%s\"}",
-        (*self).count, (*self).selection, (*self).scroll, TerminalListView_getMarker(self))
-        : snprintf(dest, cap, "nullptr");
-    bool cut = n < 0 || (size_t) n >= cap;
-    if (outTruncated != nullptr)
-        *outTruncated = cut;
-    if (cut)
-        THROW("TerminalListView projection: truncated at %zu bytes", cap);
-    return !cut;
+TerminalProjection TerminalListView_toString(const TerminalListView *self) {
+    return TerminalListView_toStringStruct(self);
 }
 
-bool TerminalListView_toStringStruct(const TerminalListView *self, char *dest, size_t cap, bool *outTruncated) {
-    return TerminalListView_toString(self, dest, cap, outTruncated);
+TerminalProjection TerminalListView_toStringStruct(const TerminalListView *self) {
+    if (self == nullptr)
+        return TerminalProjection_format("nullptr");
+    return TerminalProjection_format(
+        "TerminalListView{count=%zu,selection=%zu,scroll=%zu,marker=\"%s\"}",
+        (*self).count, (*self).selection, (*self).scroll, TerminalListView_getMarker(self));
 }

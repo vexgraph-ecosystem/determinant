@@ -5,7 +5,10 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "c23/constructor.h"
+
 #include "terminal/terminal_canvas.h"
+#include "terminal/terminal_projection.h"
 #include "terminal/terminal_frame.h"
 
 // terminal/terminal_appearance.h — the toolkit's NAMED APPEARANCE presets.
@@ -32,9 +35,11 @@ typedef struct TerminalAppearance {
     uint32_t colorText;
     uint32_t colorError;
 } TerminalAppearance;
+typedef struct TerminalAppearanceColors { uint32_t accent; uint32_t muted; uint32_t text; uint32_t error; } TerminalAppearanceColors;
 
 // The default appearance (the "ascii-striped" preset).
 TerminalAppearance TerminalAppearance_0(void);
+#define TerminalAppearance(...) CONSTRUCTOR_DISPATCH(TerminalAppearance, __VA_ARGS__)
 
 // --- Preset registry (for a settings UI: list names, pick by name/index) ---
 size_t      TerminalAppearance_presetCount(void);
@@ -44,11 +49,10 @@ TerminalAppearance TerminalAppearance_named(const char *name);// default when un
 
 // --- Configuration (symmetric setters & getters) ---
 bool TerminalAppearance_setRule(TerminalAppearance *self, TerminalRule rule);
-void TerminalAppearance_getRule(const TerminalAppearance *self, TerminalRule *outRule);
+TerminalRule TerminalAppearance_getRule(const TerminalAppearance *self);
 bool TerminalAppearance_setColors(TerminalAppearance *self, uint32_t accent, uint32_t muted,
                                   uint32_t text, uint32_t error);
-void TerminalAppearance_getColors(const TerminalAppearance *self, uint32_t *outAccent,
-                                  uint32_t *outMuted, uint32_t *outText, uint32_t *outError);
+TerminalAppearanceColors TerminalAppearance_getColors(const TerminalAppearance *self);
 
 // --- Apply ---
 // Push the preset's rule into a frame; draw a rule run into any canvas region.
@@ -56,7 +60,7 @@ void TerminalAppearance_applyTo(const TerminalAppearance *self, TerminalFrame *f
 void TerminalAppearance_drawRule(const TerminalAppearance *self, TerminalCanvas *canvas,
                                  size_t ly, TerminalPen pen);
 
-bool TerminalAppearance_toString(const TerminalAppearance *self, char *dest, size_t cap, bool *outTruncated);
-bool TerminalAppearance_toStringStruct(const TerminalAppearance *self, char *dest, size_t cap, bool *outTruncated);
+TerminalProjection TerminalAppearance_toString(const TerminalAppearance *self);
+TerminalProjection TerminalAppearance_toStringStruct(const TerminalAppearance *self);
 
 #endif
