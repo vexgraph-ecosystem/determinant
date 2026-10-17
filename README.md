@@ -27,8 +27,33 @@ with no application content:
 - `terminal_list_view`, `terminal_text_view`, `terminal_input_line`,
   `terminal_status_bar` — generic widgets holding no meaning: channels, users,
   commands and settings are all the same list with different labels.
+- `terminal_anchor` — the **placement vocabulary**: `FILL`, four reserving
+  `BAND`s (top/bottom/left/right) and nine `PIN`s, resolved as a pure function
+  that returns the placed region *and* the cursor it leaves. It owns the band
+  math: a band reserves its slice so the next layer sees a smaller cursor, while
+  a fill or a pin reserves nothing, so a background or an overlay can cover the
+  panel without disturbing the flow.
+- `terminal_panel` — the **layered panel**. A growable stack of anchored layers,
+  each with a foreground/background/style pen, an optional borrowed image and an
+  opaque draw callback. It paints **every visible layer on every call** — full
+  repaint by contract, no dirty bits and no skipping — and hands each painter the
+  region it resolved to, so nesting is simply a painter calling
+  `TerminalPanel_paint` on a child panel. The panel owns its layer array and no
+  content; the application owns every panel it created.
+- `terminal_surface` — the **last-paint presenter**. It diffs the freshly painted
+  grid against the record of what the host was last told and emits only the cells
+  that changed, as contiguous same-row runs through an injected run sink. This is
+  what makes a total repaint cheap: an unchanged frame hands the host nothing at
+  all, and a failed sink leaves the record untouched so the next present
+  re-delivers the same delta.
 - `terminal` / `terminal_button` — the resident host state with replaceable
   view/command exports, and a normalized key/click button.
+
+The composition model is therefore: the terminal hosts **one content panel**, and
+that panel is a layered panel. `TerminalAnchor` decides where each layer lands,
+`TerminalPanel` paints them all every frame, and `TerminalSurface` decides what
+actually reaches the host. Nothing here knows a chat, a file tree or an editor;
+those are the application's layers.
 
 Nothing here knows about chats, users, badges, personalities or `>w<` art — those
 are application content drawn *through* the toolkit by the app (see the
@@ -70,6 +95,24 @@ session pipes and host state remain resident. No live model call or visual
 acceptance is implied. Hotcwap remains the R1 trusted loading owner.
 
 ## Scope and Limitations
+
+Placement has one general owner (`terminal_anchor`) and one composition owner
+(`terminal_panel`), but `terminal_frame` still computes its own five regions, so
+band arithmetic is currently duplicated. That duplication is stated rather than
+settled: the frame's five regions are **not** the same five bands the anchor flow
+produces — its footer spans only the centre column, and its rails span the body
+but not the footer row — so folding it in needs a considered mapping, not a
+substitution. Until that mapping lands, new layout work belongs on anchors and
+panels, never on the frame's geometry.
+
+Not implemented, and not implied by anything tested here: hover or pointer
+hit-testing across the layer stack, the bracketed chip/segment bar the title and
+status lines need, a hierarchical tree view, a tab strip, and an editor view with
+a line-number gutter. A panel layer borrows an image through
+`TerminalPanel_setImage`; it never owns one. Allocation-failure injection during
+layer growth is unreachable in-process and is therefore unproved, as is a real
+nested paint driven by a child panel's draw callback (the owner proves the
+resolved regions, not the callback chain).
 
 ASCII cells are the current format: no Unicode/grapheme shaping, ANSI decoder,
 ncurses backend, physical terminal or cross-platform runtime proof is claimed.
