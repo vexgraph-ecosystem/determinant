@@ -59,6 +59,52 @@ bare stdout printing must not overwrite a managed screen. Diagnostic stderr
 remains a separate cold channel, not widget rendering. Hotcwap's Console is
 the R1 lifecycle object, not the R2 bare printer or a Determinant terminal widget.
 
+## Repo-Local Extensions (managed, per the Conflict Triage Law)
+
+### Placement and Layered Composition Extension
+
+The terminal hosts **one content panel**, and that panel is a layered panel.
+
+- `TerminalAnchor` owns placement as a pure function: it returns the placed
+  region *and* the cursor it leaves. Bands (`BAND_TOP/BOTTOM/LEFT/RIGHT`) reserve
+  their slice so later layers see a smaller cursor; `FILL` and the nine pins
+  reserve nothing, so a background or an overlay covers the panel without
+  disturbing the flow. One rule — reserve or not — is the whole layout model.
+- `TerminalPanel` owns the layer stack, its z-order and its flow order, and
+  nothing about content. `TerminalPanel_paint` is **total by contract**: every
+  visible layer repaints on every call, with no dirty bits and no skipping. A
+  hidden layer neither draws nor reserves.
+- A layer **borrows** its image and its painter; the panel owns only its layer
+  array. Nesting is a painter calling `TerminalPanel_paint` on a child panel with
+  the region it resolved to, so the application owns every panel it created and
+  no ownership passes between them.
+- The presentation delta is **not** the panel's job. `TerminalSurface` diffs the
+  freshly painted grid against the last paint and emits only changed same-row
+  runs; a total repaint therefore still costs the host nothing on an unchanged
+  frame. A refused run leaves the record untouched so the next present
+  re-delivers the same delta.
+- Layer identities are slot + generation. A retired slot reports a stale id
+  instead of addressing a recycled layer; derived geometry and growth change only
+  through add/remove/anchor operations, never through a setter that could forge
+  lifetime. Cold growth doubles; refusals are counted and reported once per epoch.
+
+### Pending: frame placement mapping
+
+`TerminalFrame` still computes its own five regions, so band arithmetic is
+currently duplicated with `TerminalAnchor`. This is a stated, deliberate
+duplication, not a settled design: the frame's five regions are **not** the same
+five anchor bands — its footer spans only the centre column, and its rails span
+the body but not the footer row — so absorbing it needs a considered mapping.
+Until that mapping lands, new layout work belongs on anchors and panels; never
+extend the frame's geometry.
+
+Not implemented, and not implied by any executed owner: layer-stack hover
+hit-testing, the bracketed chip/segment bar, a hierarchical tree view, a tab
+strip, an editor view with a line-number gutter, layer-growth allocation-failure
+injection, and a real nested paint driven by a child panel's painter.
+
+;;INTENTION("R3 terminal toolkit: anchor-owned placement, a layered content panel painted totally each repaint, and a last-paint presenter that owns the delta; the frame's five regions are a pending deliberate mapping rather than a second layout system.")
+
 ## Current Proof Boundary
 
 This lawbook establishes the accepted contract, not implementation readiness.
