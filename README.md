@@ -33,13 +33,21 @@ with no application content:
   math: a band reserves its slice so the next layer sees a smaller cursor, while
   a fill or a pin reserves nothing, so a background or an overlay can cover the
   panel without disturbing the flow.
-- `terminal_panel` — the **layered panel**. A growable stack of anchored layers,
-  each with a foreground/background/style pen, an optional borrowed image and an
-  opaque draw callback. It paints **every visible layer on every call** — full
-  repaint by contract, no dirty bits and no skipping — and hands each painter the
-  region it resolved to, so nesting is simply a painter calling
-  `TerminalPanel_paint` on a child panel. The panel owns its layer array and no
-  content; the application owns every panel it created.
+- `terminal_panel` — the **container**. A panel holds children and arranges them;
+  it has no content of its own beyond a pen and an optional background image. A
+  child is either another panel or a text leaf, and either can be a child of
+  either — that is the whole tree. Its flavour is one field, not one class per
+  kind: `FLEX` flows (a band anchor takes its slice and reserves it, so the next
+  child sees a smaller cursor) and `LAYERED` stacks (the cursor never shrinks, so
+  every child resolves against the whole area and z-order is insertion order).
+  Adding a child transfers ownership; removing or detaching returns it; freeing a
+  panel frees its whole subtree.
+- `terminal_text` — the **addressable leaf**. A borrowed string drawn on one row
+  of the region its parent resolved, with its own pen, optional bracket glyphs and
+  an alignment. Addressable on purpose: anonymous glyphs can be drawn, but nothing
+  can hover or recolour them, so anything the interface may need to talk to later
+  is an object the application keeps. Colours it does not set are inherited from
+  its parent, so a panel can declare "everything on me is grey" once.
 - `terminal_surface` — the **last-paint presenter**. It diffs the freshly painted
   grid against the record of what the host was last told and emits only the cells
   that changed, as contiguous same-row runs through an injected run sink. This is
@@ -50,10 +58,12 @@ with no application content:
   view/command exports, and a normalized key/click button.
 
 The composition model is therefore: the terminal hosts **one content panel**, and
-that panel is a layered panel. `TerminalAnchor` decides where each layer lands,
-`TerminalPanel` paints them all every frame, and `TerminalSurface` decides what
-actually reaches the host. Nothing here knows a chat, a file tree or an editor;
-those are the application's layers.
+that panel is a tree of panels and text. `TerminalAnchor` decides where each child
+lands, `TerminalPanel` paints the whole tree every frame, and `TerminalSurface`
+decides what actually reaches the host. Because every rectangle is recomputed from
+the canvas size on every paint, **resize is free** — nothing caches a size, so a
+resize is just the next paint at new dimensions. Nothing here knows a chat, an
+editor or a file tree; those are the application's children.
 
 Nothing here knows about chats, users, badges, personalities or `>w<` art — those
 are application content drawn *through* the toolkit by the app (see the
@@ -96,23 +106,35 @@ acceptance is implied. Hotcwap remains the R1 trusted loading owner.
 
 ## Scope and Limitations
 
-Placement has one general owner (`terminal_anchor`) and one composition owner
-(`terminal_panel`), but `terminal_frame` still computes its own five regions, so
-band arithmetic is currently duplicated. That duplication is stated rather than
-settled: the frame's five regions are **not** the same five bands the anchor flow
-produces — its footer spans only the centre column, and its rails span the body
-but not the footer row — so folding it in needs a considered mapping, not a
-substitution. Until that mapping lands, new layout work belongs on anchors and
-panels, never on the frame's geometry.
+The component tree has **two kinds**: a panel (container) and a text (leaf). The
+panel's flavour is a field rather than a class hierarchy, so nothing can ask "is
+this a Panel?" — a template/type identity would need this repository to gain a
+class registry, and nothing asks yet. `SCROLL` and `CODE` panel flavours are not
+implemented: scrolling needs a real clip and offset, and a code field needs a
+gutter, so neither is a name to add early.
+
+Cycle safety is proved for **paint only**. A panel cannot contain itself directly
+(that add is refused), and an indirect cycle is refused at paint time, but an
+indirect cycle still makes teardown undefined — the tree is acyclic by contract,
+and `TerminalPanel_detachPanel` exists so a subtree can be re-parented without
+being freed. Child-array allocation failure is unreachable in-process and is
+therefore unproved.
+
+`terminal_frame` still computes its own five regions, so band arithmetic is
+duplicated with `terminal_anchor`. That duplication is stated rather than settled:
+the frame's five regions are **not** the same five bands the anchor flow produces
+— its footer spans only the centre column, and its rails span the body but not the
+footer row — so retiring it means migrating `TerminalRule` and the appearance
+presets first, not substituting geometry. Until that lands, new layout work
+belongs on panels and anchors.
 
 Not implemented, and not implied by anything tested here: hover or pointer
-hit-testing across the layer stack, the bracketed chip/segment bar the title and
-status lines need, a hierarchical tree view, a tab strip, and an editor view with
-a line-number gutter. A panel layer borrows an image through
-`TerminalPanel_setImage`; it never owns one. Allocation-failure injection during
-layer growth is unreachable in-process and is therefore unproved, as is a real
-nested paint driven by a child panel's draw callback (the owner proves the
-resolved regions, not the callback chain).
+hit-testing across the tree (the cold `TerminalPanel_childAt` primitive exists,
+nothing routes events through it yet), the bracketed chip/segment bar the title
+and status lines need, a hierarchical tree view, a tab strip, and an editor view
+with a line-number gutter. The generic list/text-view/input-line/status-bar
+widgets still exist as they were; they are superseded by the tree but not yet
+rebuilt from it, and `terminal_status_bar` in particular is just two texts.
 
 ASCII cells are the current format: no Unicode/grapheme shaping, ANSI decoder,
 ncurses backend, physical terminal or cross-platform runtime proof is claimed.
