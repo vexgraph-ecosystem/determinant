@@ -108,12 +108,14 @@ static void complete(TerminalInput *self, size_t raw, size_t x, size_t y,
     bool motion = sgr && (raw & 32u) != 0;
     bool wheel = (raw & 64u) != 0;
     if (wheel) {
-        if (low == 0)
-            event.kind = TERMINAL_POINTER_WHEEL_UP;
-        else if (low == 1)
-            event.kind = TERMINAL_POINTER_WHEEL_DOWN;
-        else
-            event.kind = TERMINAL_POINTER_NONE;
+        // 64/65 are vertical; 66/67 are the horizontal pair a trackpad or a tilt
+        // wheel sends, and dropping them was why panning sideways was impossible.
+        switch (low) {
+            case 0: event.kind = TERMINAL_POINTER_WHEEL_UP; break;
+            case 1: event.kind = TERMINAL_POINTER_WHEEL_DOWN; break;
+            case 2: event.kind = TERMINAL_POINTER_WHEEL_LEFT; break;
+            default: event.kind = TERMINAL_POINTER_WHEEL_RIGHT; break;
+        }
     } else if (motion) {
         event.kind = low == 3 ? TERMINAL_POINTER_MOVE : TERMINAL_POINTER_DRAG;
     } else if (release || low == 3) {
@@ -242,6 +244,8 @@ static const char *kindName(TerminalPointerKind kind) {
         case TERMINAL_POINTER_RELEASE: return "release";
         case TERMINAL_POINTER_WHEEL_UP: return "wheel-up";
         case TERMINAL_POINTER_WHEEL_DOWN: return "wheel-down";
+        case TERMINAL_POINTER_WHEEL_LEFT: return "wheel-left";
+        case TERMINAL_POINTER_WHEEL_RIGHT: return "wheel-right";
         default: return "none";
     }
 }

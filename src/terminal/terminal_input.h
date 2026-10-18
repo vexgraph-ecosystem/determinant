@@ -25,7 +25,7 @@
 //   bits 0-1  button: 0 left, 1 middle, 2 right, 3 none
 //   bit 2     shift, bit 3 meta, bit 4 ctrl
 //   bit 5     motion (SGR only — this is what makes hover possible at all)
-//   bit 6     wheel: 64 up, 65 down
+//   bit 6     wheel: 64 up, 65 down, 66 left, 67 right
 //
 // X10 cannot express motion, modifiers beyond its three raw bytes, or a
 // coordinate past 223, which is exactly why SGR exists.
@@ -46,7 +46,9 @@ typedef enum TerminalPointerKind {
     TERMINAL_POINTER_PRESS,
     TERMINAL_POINTER_RELEASE,
     TERMINAL_POINTER_WHEEL_UP,
-    TERMINAL_POINTER_WHEEL_DOWN
+    TERMINAL_POINTER_WHEEL_DOWN,
+    TERMINAL_POINTER_WHEEL_LEFT,     // low bits 2; trackpads and tilt wheels send this
+    TERMINAL_POINTER_WHEEL_RIGHT     // low bits 3
 } TerminalPointerKind;
 
 typedef enum TerminalPointerButton {
