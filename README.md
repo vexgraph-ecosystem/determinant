@@ -57,7 +57,7 @@ with no application content:
 - `terminal_input` — the **mouse byte decoder**. A pure state machine turning the
   terminal's two mouse encodings (SGR, and X10 as the legacy fallback) into one
   normalized `TerminalPointerEvent` in **cells**: move, drag, press, release,
-  wheel, with the button and the shift/meta/ctrl bits. Bytes in, event out — no
+  wheel up/down/left/right, with the button and the shift/meta/ctrl bits. Bytes in, event out — no
   I/O, no allocation, no clock — which is why every case is proved with a literal
   byte string and no terminal. It owns the grammar, never the terminal mode: what
   the terminal actually sends is the host's decision, and that separation is what
