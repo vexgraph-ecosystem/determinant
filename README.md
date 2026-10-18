@@ -54,6 +54,14 @@ with no application content:
   what makes a total repaint cheap: an unchanged frame hands the host nothing at
   all, and a failed sink leaves the record untouched so the next present
   re-delivers the same delta.
+- `terminal_input` — the **mouse byte decoder**. A pure state machine turning the
+  terminal's two mouse encodings (SGR, and X10 as the legacy fallback) into one
+  normalized `TerminalPointerEvent` in **cells**: move, drag, press, release,
+  wheel, with the button and the shift/meta/ctrl bits. Bytes in, event out — no
+  I/O, no allocation, no clock — which is why every case is proved with a literal
+  byte string and no terminal. It owns the grammar, never the terminal mode: what
+  the terminal actually sends is the host's decision, and that separation is what
+  lets "disable mouse reporting" and "track the mouse" each be answered honestly.
 - `terminal` / `terminal_button` — the resident host state with replaceable
   view/command exports, and a normalized key/click button.
 
@@ -106,12 +114,12 @@ acceptance is implied. Hotcwap remains the R1 trusted loading owner.
 
 ## Scope and Limitations
 
-The component tree has **two kinds**: a panel (container) and a text (leaf). The
-panel's flavour is a field rather than a class hierarchy, so nothing can ask "is
-this a Panel?" — a template/type identity would need this repository to gain a
-class registry, and nothing asks yet. `SCROLL` and `CODE` panel flavours are not
-implemented: scrolling needs a real clip and offset, and a code field needs a
-gutter, so neither is a name to add early.
+Pointer **routing** is not built. `TerminalPanel_childAt` resolves a cell to the
+child under it and `terminal_input` decodes the mouse, but nothing in the toolkit
+connects the two into hover or click delivery — the application does that today,
+and no component state (hover, pressed, grabbed) exists on a layer. The inert /
+handle / control distinction the semicolon design asks for is therefore still
+application-side.
 
 Cycle safety is proved for **paint only**. A panel cannot contain itself directly
 (that add is refused), and an indirect cycle is refused at paint time, but an
