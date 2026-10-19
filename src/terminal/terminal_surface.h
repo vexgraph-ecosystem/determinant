@@ -47,6 +47,29 @@ typedef struct TerminalRun {
     const uint32_t *bg;     // borrowed background at the first cell (nullable)
 } TerminalRun;
 
+// A present is a TRANSACTION. The host is told when one opens and when it closes, so
+// a device that can apply an update atomically does: every changed run belongs to one
+// frame, and a frame is published as a unit. This is the terminal's counterpart of a
+// compositor transaction - the same discipline the native stack applies to a layer,
+// where all of a frame's changes land in one commit rather than dribbling out.
+//
+// The bracket is opened LAZILY, immediately before the first changed run, so a frame
+// that changes nothing opens no transaction and stays completely silent (the
+// Present-On-Demand rule). It is closed even when a sink refused part-way, because a
+// device left inside a half-finished transaction is a device left frozen.
+//
+// The phases are notifications, not requests: what the bracket MEANS belongs to the
+// host's device. A terminal maps it onto synchronized output; a layer-backed surface
+// would map it onto its own commit.
+typedef enum TerminalPresentPhase {
+    TERMINAL_PRESENT_BEGIN = 0,  // a transaction is open; the changed runs follow
+    TERMINAL_PRESENT_END         // the transaction closes; the host may publish
+} TerminalPresentPhase;
+
+// The frame bracket. Called at most once per phase per present, and never at all for
+// a frame that changed nothing.
+typedef void (*TerminalFrameFn)(void *frameContext, TerminalPresentPhase phase);
+
 // The host sink: accept ONE changed run. Returning false refuses it, which the
 // surface records and counts (the Exhaustion Loudness Law) and re-delivers on the
 // next present. Bounded and synchronous; the planes are borrowed for the duration
@@ -59,6 +82,7 @@ typedef bool (*TerminalRunFn)(void *hostContext, TerminalRun run);
 typedef struct TerminalPresentResult {
     bool ok;             // every changed run was accepted
     bool changed;        // any cell differed from the last paint
+    bool transactional;  // a frame transaction was opened AND closed around the runs
     size_t changedCells; // differing cells found by this present's scan
     size_t runs;         // runs handed to the sink
     size_t emittedCells; // cells inside those runs (>= changedCells)
@@ -77,6 +101,9 @@ typedef struct TerminalSurface {
     TerminalCanvas front;     // last-presented grid (borrowed planes)
     TerminalRunFn sink;       // borrowed host run sink
     void *hostContext;        // opaque resident sink state
+    TerminalFrameFn frame;    // borrowed frame bracket (nullable)
+    void *frameContext;       // opaque bracket state
+    bool bracketed;           // a transaction is currently open
     size_t gapTolerance;      // max unchanged run inside one emitted run
     size_t presentCount;      // completed presents (lifetime)
     size_t changedCells;      // differing cells in the last present
@@ -99,6 +126,12 @@ TerminalSurface TerminalSurface_2(TerminalCanvas back, TerminalCanvas front);
 bool TerminalSurface_bind(TerminalSurface *self, const TerminalCanvas *back,
                           const TerminalCanvas *front, TerminalRunFn sink, void *hostContext);
 bool TerminalSurface_setSink(TerminalSurface *self, TerminalRunFn sink, void *hostContext);
+// Install the frame bracket. Refused while a transaction is open, for the same reason
+// the sink is: the host must not change who is being told mid-frame.
+bool TerminalSurface_setFrame(TerminalSurface *self, TerminalFrameFn frame, void *frameContext);
+TerminalFrameFn TerminalSurface_getFrame(const TerminalSurface *self);
+void *TerminalSurface_getFrameContext(const TerminalSurface *self);
+bool TerminalSurface_isBracketed(const TerminalSurface *self);
 bool TerminalSurface_setGapTolerance(TerminalSurface *self, size_t tolerance);
 size_t TerminalSurface_getGapTolerance(const TerminalSurface *self);
 

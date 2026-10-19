@@ -53,7 +53,12 @@ with no application content:
   that changed, as contiguous same-row runs through an injected run sink. This is
   what makes a total repaint cheap: an unchanged frame hands the host nothing at
   all, and a failed sink leaves the record untouched so the next present
-  re-delivers the same delta.
+  re-delivers the same delta. A present is also a **transaction**: the host is told
+  when one opens and when it closes, so a device that can apply an update atomically
+  does. The bracket opens lazily before the first changed run and closes even when a
+  sink refused part-way, because a device left inside a half-finished frame is a
+  device left frozen. What the bracket *means* stays the host's business — the
+  terminal shell maps it onto synchronized output.
 - `terminal_input` — the **mouse byte decoder**. A pure state machine turning the
   terminal's two mouse encodings (SGR, and X10 as the legacy fallback) into one
   normalized `TerminalPointerEvent` in **cells**: move, drag, press, release,

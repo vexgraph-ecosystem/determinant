@@ -27,6 +27,9 @@
  * TerminalCanvas front           last-presented grid (borrowed planes)
  * TerminalRunFn sink             borrowed host run sink
  * void *hostContext              opaque resident sink state
+ * TerminalFrameFn frame          borrowed frame bracket (nullable)
+ * void *frameContext             opaque bracket state
+ * bool bracketed                 a transaction is currently open
  * size_t gapTolerance            max unchanged run inside one emitted run
  * size_t presentCount            completed presents (lifetime)
  * size_t changedCells            differing cells in the last present
@@ -42,6 +45,7 @@
  * SLOT RECORD: TerminalPresentResult
  * bool ok                        every changed run was accepted
  * bool changed                   any cell differed from the last paint
+ * bool transactional             a frame transaction opened AND closed
  * size_t changedCells            differing cells found by the scan
  * size_t runs                    runs handed to the sink
  * size_t emittedCells            cells inside those runs
@@ -57,6 +61,7 @@
  * Admission: bool TerminalSurface_bind(self, back, front, sink, hostContext)
  *   bool TerminalSurface_setSink(self, sink, hostContext)
  *   bool TerminalSurface_reset(self)
+ *   bool setFrame/getFrame/getFrameContext/isBracketed(self, ...)
  * Configuration: bool setGapTolerance(self, tolerance), size_t getGapTolerance(self)
  * Present: TerminalPresentResult TerminalSurface_present(self)
  * Queries: bool isBound/isActive(self)
@@ -104,6 +109,12 @@ static bool cellDiffers(const TerminalCanvas *back, const TerminalCanvas *front,
 }
 
 static bool emitRun(TerminalSurface *self, size_t y, size_t start, size_t last) {
+    // The transaction opens on the first run that is actually going to be handed over,
+    // so a frame carrying no change never opens one.
+    if (!(*self).bracketed && (*self).frame != nullptr) {
+        (*self).bracketed = true;
+        (*self).frame((*self).frameContext, TERMINAL_PRESENT_BEGIN);
+    }
     const TerminalCanvas *back = &(*self).back;
     size_t gridY = y + (*back).y;
     size_t first = cellIndex(back, start, y);
@@ -180,6 +191,19 @@ bool TerminalSurface_bind(TerminalSurface *self, const TerminalCanvas *back,
     (*self).refusalCount = 0;
     return true;
 }
+
+bool TerminalSurface_setFrame(TerminalSurface *self, TerminalFrameFn frame, void *frameContext) {
+    if (self == nullptr || frame == nullptr || (*self).active || (*self).bracketed) {
+        THROW("TerminalSurface setFrame: null bracket, or a transaction is open");
+        return false;
+    }
+    (*self).frame = frame;
+    (*self).frameContext = frameContext;
+    return true;
+}
+TerminalFrameFn TerminalSurface_getFrame(const TerminalSurface *self) { return self ? (*self).frame : nullptr; }
+void *TerminalSurface_getFrameContext(const TerminalSurface *self) { return self ? (*self).frameContext : nullptr; }
+bool TerminalSurface_isBracketed(const TerminalSurface *self) { return self != nullptr && (*self).bracketed; }
 
 bool TerminalSurface_setSink(TerminalSurface *self, TerminalRunFn sink, void *hostContext) {
     if (self == nullptr || sink == nullptr || (*self).active) {
@@ -277,6 +301,14 @@ TerminalPresentResult TerminalSurface_present(TerminalSurface *self) {
         }
         if (accepted && open)
             accepted = emitRun(self, y, start, last);
+    }
+    // Close the transaction BEFORE anything else is reported. It closes even when a
+    // sink refused part-way: leaving a device inside a half-finished transaction is
+    // how a screen ends up frozen.
+    if ((*self).bracketed) {
+        (*self).bracketed = false;
+        (*self).frame((*self).frameContext, TERMINAL_PRESENT_END);
+        result.transactional = true;
     }
     (*self).active = false;
     (*self).changedCells = changed;
