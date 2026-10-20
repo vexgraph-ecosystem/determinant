@@ -13,8 +13,8 @@
 //
 // This is a READ-ONLY document view, not a CommonMark implementation. It owns a
 // GFM-ish subset — headings, paragraphs, emphasis, inline code, links, lists,
-// task items, quotes, fenced code, thematic breaks and simple tables — and
-// deliberately leaves HTML layout, images, footnotes, math and nested tables to
+// task items, quotes/callouts, fenced code, thematic breaks and bordered simple
+// tables — and deliberately leaves HTML layout, images, footnotes, math and nested tables to
 // the caller or to a later slice. The subset is stated so nobody mistakes a
 // preview for a conformance claim.
 //

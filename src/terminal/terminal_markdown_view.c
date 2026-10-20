@@ -14,8 +14,10 @@
  * not source code: a preview has to spend the cell budget on hierarchy, not on
  * the punctuation that describes it, and a terminal has no proportional type to
  * fall back on. So headings become weight and accent, emphasis becomes bold and
- * underline, code becomes a tinted run, lists become hanging indents, quotes
- * become bars, and fences become a ruled block. The syntax markers themselves are
+ * underlined without printing its asterisks, inline code becomes green text without
+ * a reverse-video box, lists become hanging indents, callouts become colored
+ * sections marked by a bold left wall, and fences/tables become bordered panels.
+ * The syntax markers themselves are
  * consumed by the parser and never printed.
  *
  * The split is deliberate. Parsing and wrapping are COLD: setViewport(width)
@@ -79,7 +81,7 @@
  *   wrapStart/wrapSpace/wrapWord/wrapBreak
  *   findBytes/findBacktickRun/emitInline
  *   emitGap/emitHeading/emitParagraphLine/emitFence/emitRule/emitList/emitQuote
- *   emitTable/splitTableRow/trimSpan
+ *   emitTable/splitTableRow/trimSpan; callouts use the > [!TYPE] quote form
  *   layout(self)              the cold parse + wrap pass
  * FUNCTION REGISTRY (exports)
  * Constructor: TerminalMarkdownView *TerminalMarkdownView_0(void) [arity chooser]
@@ -120,7 +122,15 @@
 static const char *const MARKDOWN_SPACES =
     "                                ";
 static const char *const MARKDOWN_RULE_GLYPH = "─";
-static const char *const MARKDOWN_QUOTE_GLYPH = "│ ";
+static const char *const MARKDOWN_QUOTE_GLYPH = "⎸ ";
+static const char *const MARKDOWN_BORDER_TOP = "┌";
+static const char *const MARKDOWN_BORDER_MIDDLE = "├";
+static const char *const MARKDOWN_BORDER_BOTTOM = "└";
+static const char *const MARKDOWN_BORDER_RIGHT = "┐";
+static const char *const MARKDOWN_BORDER_RIGHT_MIDDLE = "┤";
+static const char *const MARKDOWN_BORDER_RIGHT_BOTTOM = "┘";
+static const char *const MARKDOWN_BORDER_HORIZONTAL = "─";
+static const char *const MARKDOWN_BORDER_VERTICAL = "│";
 static const char *const MARKDOWN_IMAGE_GLYPH = "▧ ";
 
 typedef struct MarkdownSegment {
@@ -945,9 +955,19 @@ static bool emitFence(TerminalMarkdownView *self, const char *const *lines, size
                       size_t *index, char marker, size_t run, size_t contentStart) {
     if (!emitGap(self))
         return false;
+    if (!appendRow(self)
+        || !appendSegment(self, MARKDOWN_BORDER_TOP, strlen(MARKDOWN_BORDER_TOP), 1u,
+                          TERMINAL_MARKDOWN_FENCE, 0)
+        || !appendSegment(self, MARKDOWN_BORDER_HORIZONTAL, strlen(MARKDOWN_BORDER_HORIZONTAL),
+                          (*self).width > 2u ? (*self).width - 2u : 0u,
+                          TERMINAL_MARKDOWN_FENCE, 0)
+        || !appendSegment(self, MARKDOWN_BORDER_RIGHT, strlen(MARKDOWN_BORDER_RIGHT), 1u,
+                          TERMINAL_MARKDOWN_FENCE, 0))
+        return false;
     MarkdownPrefix prefix = {0};
-    prefixAdd(&prefix, MARKDOWN_QUOTE_GLYPH, strlen(MARKDOWN_QUOTE_GLYPH),
+    prefixAdd(&prefix, MARKDOWN_BORDER_VERTICAL, strlen(MARKDOWN_BORDER_VERTICAL),
               TERMINAL_MARKDOWN_FENCE, 0);
+    prefixSpaces(&prefix, 1u, TERMINAL_MARKDOWN_FENCE, 0);
     MarkdownWrap wrap = { .prefix = &prefix, .width = (*self).width };
     (void) contentStart;
     size_t at = *index + 1u;
@@ -965,6 +985,16 @@ static bool emitFence(TerminalMarkdownView *self, const char *const *lines, size
             return false;
         ++at;
     }
+    if (!appendRow(self)
+        || !appendSegment(self, MARKDOWN_BORDER_BOTTOM, strlen(MARKDOWN_BORDER_BOTTOM), 1u,
+                          TERMINAL_MARKDOWN_FENCE, 0)
+        || !appendSegment(self, MARKDOWN_BORDER_HORIZONTAL, strlen(MARKDOWN_BORDER_HORIZONTAL),
+                          (*self).width > 2u ? (*self).width - 2u : 0u,
+                          TERMINAL_MARKDOWN_FENCE, 0)
+        || !appendSegment(self, MARKDOWN_BORDER_RIGHT_BOTTOM,
+                          strlen(MARKDOWN_BORDER_RIGHT_BOTTOM), 1u,
+                          TERMINAL_MARKDOWN_FENCE, 0))
+        return false;
     *index = at;
     return true;
 }
@@ -1047,6 +1077,7 @@ static bool emitQuote(TerminalMarkdownView *self, const char *const *lines, size
     MarkdownPrefix prefix = {0};
     prefixQuote(&prefix, depth);
     MarkdownWrap wrap = { .prefix = &prefix, .width = (*self).width };
+    bool callout = false;
     while (at < lineCount) {
         size_t length = strlen(lines[at]);
         size_t lineDepth = 0;
@@ -1056,6 +1087,28 @@ static bool emitQuote(TerminalMarkdownView *self, const char *const *lines, size
         if (lineDepth != depth)
             break;
         size_t end = trimRight(lines[at], length);
+        if (!callout && end - lineContent >= 5u
+            && lines[at][lineContent] == '[' && lines[at][lineContent + 1u] == '!') {
+            size_t close = lineContent + 2u;
+            while (close < end && lines[at][close] != ']')
+                ++close;
+            if (close < end && close > lineContent + 2u) {
+                callout = true;
+                if (!wrapStart(self, &wrap, true)
+                    || !appendSegment(self, lines[at] + lineContent + 2u,
+                                      close - lineContent - 2u, 1u,
+                                      TERMINAL_MARKDOWN_MARKER, TERMINAL_STYLE_BOLD))
+                    return false;
+                if (close + 1u < end) {
+                    wrapSpace(&wrap);
+                    if (!emitInline(self, &wrap, lines[at] + close + 1u,
+                                    end - close - 1u, TERMINAL_MARKDOWN_QUOTE, 0, 0))
+                        return false;
+                }
+                ++at;
+                continue;
+            }
+        }
         if (end > lineContent) {
             wrapSpace(&wrap);
             if (!emitInline(self, &wrap, lines[at] + lineContent, end - lineContent,
@@ -1153,10 +1206,22 @@ static bool emitTable(TerminalMarkdownView *self, const char *const *lines, size
     }
     if (!emitGap(self))
         return false;
+    if (!appendRow(self)
+        || !appendSegment(self, MARKDOWN_BORDER_TOP, strlen(MARKDOWN_BORDER_TOP), 1u,
+                          TERMINAL_MARKDOWN_RULE, 0)
+        || !appendSegment(self, MARKDOWN_BORDER_HORIZONTAL, strlen(MARKDOWN_BORDER_HORIZONTAL),
+                          total, TERMINAL_MARKDOWN_RULE, 0)
+        || !appendSegment(self, MARKDOWN_BORDER_RIGHT, strlen(MARKDOWN_BORDER_RIGHT), 1u,
+                          TERMINAL_MARKDOWN_RULE, 0))
+        return false;
     for (size_t row = 0; row < rowCount; ++row) {
         size_t line = rowStarts[row];
         tableCells(lines[line], strlen(lines[line]), cells, lengths, &count);
         if (!appendRow(self))
+            return false;
+        if (!appendSegment(self, MARKDOWN_BORDER_VERTICAL,
+                           strlen(MARKDOWN_BORDER_VERTICAL), 1u,
+                           TERMINAL_MARKDOWN_RULE, 0))
             return false;
         for (size_t column = 0; column < columns; ++column) {
             const char *cell = column < count ? cells[column] : "";
@@ -1183,18 +1248,42 @@ static bool emitTable(TerminalMarkdownView *self, const char *const *lines, size
                     return false;
             }
             if (column + 1u < columns) {
-                if (!appendSegment(self, "  ", 2u, 1u, TERMINAL_MARKDOWN_BODY, 0))
+                if (!appendSegment(self, " ", 1u, 1u, TERMINAL_MARKDOWN_BODY, 0)
+                    || !appendSegment(self, MARKDOWN_BORDER_VERTICAL,
+                                      strlen(MARKDOWN_BORDER_VERTICAL), 1u,
+                                      TERMINAL_MARKDOWN_RULE, 0)
+                    || !appendSegment(self, " ", 1u, 1u, TERMINAL_MARKDOWN_BODY, 0))
                     return false;
             }
         }
+        if (!appendSegment(self, MARKDOWN_BORDER_VERTICAL,
+                           strlen(MARKDOWN_BORDER_VERTICAL), 1u,
+                           TERMINAL_MARKDOWN_RULE, 0))
+            return false;
         if (row == 0) {
             if (!appendRow(self))
                 return false;
-            if (!appendSegment(self, MARKDOWN_RULE_GLYPH, strlen(MARKDOWN_RULE_GLYPH),
-                               total, TERMINAL_MARKDOWN_RULE, 0))
+            if (!appendSegment(self, MARKDOWN_BORDER_MIDDLE,
+                               strlen(MARKDOWN_BORDER_MIDDLE), 1u,
+                               TERMINAL_MARKDOWN_RULE, 0)
+                || !appendSegment(self, MARKDOWN_BORDER_HORIZONTAL,
+                                  strlen(MARKDOWN_BORDER_HORIZONTAL), total,
+                                  TERMINAL_MARKDOWN_RULE, 0)
+                || !appendSegment(self, MARKDOWN_BORDER_RIGHT_MIDDLE,
+                                  strlen(MARKDOWN_BORDER_RIGHT_MIDDLE), 1u,
+                                  TERMINAL_MARKDOWN_RULE, 0))
                 return false;
         }
     }
+    if (!appendRow(self)
+        || !appendSegment(self, MARKDOWN_BORDER_BOTTOM, strlen(MARKDOWN_BORDER_BOTTOM), 1u,
+                          TERMINAL_MARKDOWN_RULE, 0)
+        || !appendSegment(self, MARKDOWN_BORDER_HORIZONTAL, strlen(MARKDOWN_BORDER_HORIZONTAL),
+                          total, TERMINAL_MARKDOWN_RULE, 0)
+        || !appendSegment(self, MARKDOWN_BORDER_RIGHT_BOTTOM,
+                          strlen(MARKDOWN_BORDER_RIGHT_BOTTOM), 1u,
+                          TERMINAL_MARKDOWN_RULE, 0))
+        return false;
     *index = at;
     return true;
 }
@@ -1335,11 +1424,11 @@ TerminalMarkdownView *TerminalMarkdownView_0(void) {
     *self = (TerminalMarkdownView) {0};
     (*self).style.body = TerminalPen_0();
     (*self).style.heading = TerminalPen_1(TERMINAL_STYLE_BOLD);
-    (*self).style.code = TerminalPen_1(TERMINAL_STYLE_REVERSE);
+    (*self).style.code = TerminalPen_2(0, TERMINAL_RGB(112, 190, 130));
     (*self).style.link = TerminalPen_1(TERMINAL_STYLE_UNDERLINE);
-    (*self).style.quote = TerminalPen_1(TERMINAL_STYLE_DIM);
+    (*self).style.quote = TerminalPen_2(TERMINAL_STYLE_BOLD, TERMINAL_RGB(105, 190, 220));
     (*self).style.rule = TerminalPen_1(TERMINAL_STYLE_DIM);
-    (*self).style.marker = TerminalPen_1(TERMINAL_STYLE_BOLD);
+    (*self).style.marker = TerminalPen_2(TERMINAL_STYLE_BOLD, TERMINAL_RGB(235, 190, 95));
     (*self).style.fence = TerminalPen_1(TERMINAL_STYLE_DIM);
     return self;
 }
