@@ -73,7 +73,8 @@ with no application content:
   terminal-cell documents. Its cold layout wraps headings, paragraphs, emphasis,
   inline links, lists/tasks, quotes/callouts, fenced code, rules and simple pipe
   tables into flat row/segment pools; inline code is green text, fenced code and
-  tables use bordered panels, and callouts use a colored bold `⎸` section marker.
+  tables use bordered panels, and callouts use a colored bold `⎸` section marker
+  repeated on every wrapped row so the quote gutter stays visible.
   Rendering is allocation-free and consumes terminal-cell styles. It is a
   deliberately limited GFM-ish subset, not
   CommonMark: HTML layout, image rendering, reference links, footnotes, math,
