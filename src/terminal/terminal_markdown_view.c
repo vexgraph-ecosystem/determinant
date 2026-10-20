@@ -16,7 +16,8 @@
  * fall back on. So headings become weight and accent, emphasis becomes bold and
  * underlined without printing its asterisks, inline code becomes green text without
  * a reverse-video box, lists become hanging indents, callouts become colored
- * sections marked by a bold left wall, and fences/tables become bordered panels.
+ * sections marked by a bold left wall repeated on every wrapped row, and
+ * fences/tables become bordered panels.
  * The syntax markers themselves are
  * consumed by the parser and never printed.
  *
@@ -71,6 +72,13 @@
  *   size_t firstSegment        offset of this row's first segment
  *   size_t segmentCount        number of segments in this row
  * PRIVATE HELPERS
+ *   MarkdownPrefixItem  const char *text (borrowed glyph span); size_t length
+ *     (span bytes); size_t cells (display width); TerminalMarkdownRole role
+ *     (pen role); uint8_t style (extra style flags).
+ *   MarkdownPrefix  MarkdownPrefixItem items[16] (row prefix); size_t count
+ *     (live prefix entries); size_t markerStart (continuation boundary);
+ *     size_t markerCount (marked entries); size_t cells (prefix width);
+ *     size_t hang (continuation indent); bool repeatOnWrap (repeat quote gutter).
  *   cellsOf/bytesForCells(text, length, ...)  cell-aware UTF-8 measurement
  *   refuse(self, reason)      count a cold refusal, reporting once per epoch
  *   growRows/growSegments(self)  cold doubling growth preserving live entries
@@ -161,6 +169,7 @@ typedef struct MarkdownPrefix {
     size_t markerCount;
     size_t cells;
     size_t hang;
+    bool repeatOnWrap;
 } MarkdownPrefix;
 
 typedef struct MarkdownWrap {
@@ -356,6 +365,7 @@ static void prefixQuote(MarkdownPrefix *prefix, size_t depth) {
     for (size_t level = 0; level < depth && (*prefix).count < MARKDOWN_PREFIX_ITEMS; ++level)
         prefixAdd(prefix, MARKDOWN_QUOTE_GLYPH, strlen(MARKDOWN_QUOTE_GLYPH),
                   TERMINAL_MARKDOWN_QUOTE, 0);
+    (*prefix).repeatOnWrap = true;
 }
 
 static void prefixBeginMarker(MarkdownPrefix *prefix) {
@@ -381,14 +391,15 @@ static bool wrapStart(TerminalMarkdownView *self, MarkdownWrap *wrap, bool first
     (*wrap).pendingSpace = false;
     const MarkdownPrefix *prefix = (*wrap).prefix;
     if (prefix != nullptr) {
-        size_t limit = first ? (*prefix).count : (*prefix).markerStart;
+        size_t limit = first || (*prefix).repeatOnWrap
+            ? (*prefix).count : (*prefix).markerStart;
         for (size_t index = 0; index < limit; ++index) {
             const MarkdownPrefixItem *item = &(*prefix).items[index];
             if (!appendSegment(self, (*item).text, (*item).length, 1u, (*item).role, (*item).style))
                 return false;
             (*wrap).x += (*item).cells;
         }
-        if (!first && (*prefix).hang != 0) {
+        if (!first && !(*prefix).repeatOnWrap && (*prefix).hang != 0) {
             if (!appendSegment(self, MARKDOWN_SPACES, (*prefix).hang, 1u,
                                TERMINAL_MARKDOWN_BODY, 0))
                 return false;
