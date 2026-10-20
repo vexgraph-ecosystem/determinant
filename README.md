@@ -69,6 +69,14 @@ with no application content:
   lets "disable mouse reporting" and "track the mouse" each be answered honestly.
 - `terminal` / `terminal_button` — the resident host state with replaceable
   view/command exports, and a normalized key/click button.
+- `terminal_markdown_view` — a borrowed-source, read-only Markdown preview for
+  terminal-cell documents. Its cold layout wraps headings, paragraphs, emphasis,
+  inline code, links, lists/tasks, quotes, fenced code, rules and simple pipe
+  tables into flat row/segment pools; rendering is allocation-free and consumes
+  terminal-cell styles. It is a deliberately limited GFM-ish subset, not
+  CommonMark: HTML layout, image rendering, reference links, footnotes, math,
+  nested tables and grapheme shaping are not implemented. The caller keeps source
+  lines alive until it clears or frees the view.
 
 The composition model is therefore: the terminal hosts **one content panel**, and
 that panel is a tree of panels and text. `TerminalAnchor` decides where each child
