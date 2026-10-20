@@ -76,9 +76,9 @@
  *                             the document limit by one)
  *   appendSegment(self, ...)  append to the open row
  *   prefixSpaces/prefixQuote/prefixBeginMarker/prefixEndMarker
- *   wrapStart/wrapContinuation/wrapSpace/wrapWord/wrapBreak
+ *   wrapStart/wrapSpace/wrapWord/wrapBreak
  *   findBytes/findBacktickRun/emitInline
- *   emitGap/emitHeading/emitParagraph/emitFence/emitRule/emitList/emitQuote
+ *   emitGap/emitHeading/emitParagraphLine/emitFence/emitRule/emitList/emitQuote
  *   emitTable/splitTableRow/trimSpan
  *   layout(self)              the cold parse + wrap pass
  * FUNCTION REGISTRY (exports)
@@ -321,16 +321,16 @@ static bool appendSegment(TerminalMarkdownView *self, const char *text, size_t l
 
 static void prefixAdd(MarkdownPrefix *prefix, const char *text, size_t length,
                       TerminalMarkdownRole role, uint8_t style) {
-    if (prefix == nullptr || prefix->count >= MARKDOWN_PREFIX_ITEMS || text == nullptr)
+    if (prefix == nullptr || (*prefix).count >= MARKDOWN_PREFIX_ITEMS || text == nullptr)
         return;
-    MarkdownPrefixItem *item = &prefix->items[prefix->count];
+    MarkdownPrefixItem *item = &(*prefix).items[(*prefix).count];
     (*item).text = text;
     (*item).length = length;
     (*item).cells = cellsOf(text, length);
     (*item).role = role;
     (*item).style = style;
-    prefix->cells += (*item).cells;
-    ++prefix->count;
+    (*prefix).cells += (*item).cells;
+    ++(*prefix).count;
 }
 
 static void prefixSpaces(MarkdownPrefix *prefix, size_t cells,
@@ -343,67 +343,67 @@ static void prefixSpaces(MarkdownPrefix *prefix, size_t cells,
 }
 
 static void prefixQuote(MarkdownPrefix *prefix, size_t depth) {
-    for (size_t level = 0; level < depth && prefix->count < MARKDOWN_PREFIX_ITEMS; ++level)
+    for (size_t level = 0; level < depth && (*prefix).count < MARKDOWN_PREFIX_ITEMS; ++level)
         prefixAdd(prefix, MARKDOWN_QUOTE_GLYPH, strlen(MARKDOWN_QUOTE_GLYPH),
                   TERMINAL_MARKDOWN_QUOTE, 0);
 }
 
 static void prefixBeginMarker(MarkdownPrefix *prefix) {
-    prefix->markerStart = prefix->count;
-    prefix->markerCount = 0;
-    prefix->hang = 0;
+    (*prefix).markerStart = (*prefix).count;
+    (*prefix).markerCount = 0;
+    (*prefix).hang = 0;
 }
 
 static void prefixEndMarker(MarkdownPrefix *prefix) {
-    if (prefix->count < prefix->markerStart)
-        prefix->count = prefix->markerStart;
-    prefix->markerCount = prefix->count - prefix->markerStart;
-    for (size_t index = prefix->markerStart; index < prefix->count; ++index)
-        prefix->hang += prefix->items[index].cells;
+    if ((*prefix).count < (*prefix).markerStart)
+        (*prefix).count = (*prefix).markerStart;
+    (*prefix).markerCount = (*prefix).count - (*prefix).markerStart;
+    for (size_t index = (*prefix).markerStart; index < (*prefix).count; ++index)
+        (*prefix).hang += (*prefix).items[index].cells;
 }
 
 static bool wrapStart(TerminalMarkdownView *self, MarkdownWrap *wrap, bool first) {
     if (!appendRow(self))
         return false;
-    wrap->open = true;
-    wrap->x = 0;
-    wrap->content = false;
-    wrap->pendingSpace = false;
-    const MarkdownPrefix *prefix = wrap->prefix;
+    (*wrap).open = true;
+    (*wrap).x = 0;
+    (*wrap).content = false;
+    (*wrap).pendingSpace = false;
+    const MarkdownPrefix *prefix = (*wrap).prefix;
     if (prefix != nullptr) {
-        size_t limit = first ? prefix->count : prefix->markerStart;
+        size_t limit = first ? (*prefix).count : (*prefix).markerStart;
         for (size_t index = 0; index < limit; ++index) {
-            const MarkdownPrefixItem *item = &prefix->items[index];
+            const MarkdownPrefixItem *item = &(*prefix).items[index];
             if (!appendSegment(self, (*item).text, (*item).length, 1u, (*item).role, (*item).style))
                 return false;
-            wrap->x += (*item).cells;
+            (*wrap).x += (*item).cells;
         }
-        if (!first && prefix->hang != 0) {
-            if (!appendSegment(self, MARKDOWN_SPACES, prefix->hang, 1u,
+        if (!first && (*prefix).hang != 0) {
+            if (!appendSegment(self, MARKDOWN_SPACES, (*prefix).hang, 1u,
                                TERMINAL_MARKDOWN_BODY, 0))
                 return false;
-            wrap->x += prefix->hang;
+            (*wrap).x += (*prefix).hang;
         }
     }
-    wrap->prefixCells = wrap->x;
-    wrap->started = true;
+    (*wrap).prefixCells = (*wrap).x;
+    (*wrap).started = true;
     return true;
 }
 
 static void wrapSpace(MarkdownWrap *wrap) {
     if (wrap != nullptr)
-        wrap->pendingSpace = true;
+        (*wrap).pendingSpace = true;
 }
 
 static bool wrapWord(TerminalMarkdownView *self, MarkdownWrap *wrap, const char *text,
                      size_t length, TerminalMarkdownRole role, uint8_t style) {
     if (wrap == nullptr || text == nullptr || length == 0)
         return true;
-    if (!wrap->open && !wrapStart(self, wrap, !wrap->started))
+    if (!(*wrap).open && !wrapStart(self, wrap, !(*wrap).started))
         return false;
     size_t wordCells = cellsOf(text, length);
-    size_t gap = wrap->pendingSpace && wrap->content ? 1u : 0u;
-    if (wrap->content && wrap->x + gap + wordCells > wrap->width) {
+    size_t gap = (*wrap).pendingSpace && (*wrap).content ? 1u : 0u;
+    if ((*wrap).content && (*wrap).x + gap + wordCells > (*wrap).width) {
         if (!wrapStart(self, wrap, false))
             return false;
         gap = 0;
@@ -411,24 +411,24 @@ static bool wrapWord(TerminalMarkdownView *self, MarkdownWrap *wrap, const char 
     if (gap != 0) {
         if (!appendSegment(self, " ", 1u, 1u, TERMINAL_MARKDOWN_BODY, 0))
             return false;
-        ++wrap->x;
+        ++(*wrap).x;
     }
-    wrap->pendingSpace = false;
-    size_t available = wrap->width > wrap->x ? wrap->width - wrap->x : 0u;
+    (*wrap).pendingSpace = false;
+    size_t available = (*wrap).width > (*wrap).x ? (*wrap).width - (*wrap).x : 0u;
     if (wordCells <= available) {
         if (!appendSegment(self, text, length, 1u, role, style))
             return false;
-        wrap->x += wordCells;
-        wrap->content = true;
+        (*wrap).x += wordCells;
+        (*wrap).content = true;
         return true;
     }
     size_t at = 0;
     while (at < length) {
-        available = wrap->width > wrap->x ? wrap->width - wrap->x : 0u;
+        available = (*wrap).width > (*wrap).x ? (*wrap).width - (*wrap).x : 0u;
         if (available == 0) {
             if (!wrapStart(self, wrap, false))
                 return false;
-            available = wrap->width > wrap->x ? wrap->width - wrap->x : 1u;
+            available = (*wrap).width > (*wrap).x ? (*wrap).width - (*wrap).x : 1u;
         }
         size_t used = 0;
         size_t take = bytesForCells(text + at, length - at, available, &used);
@@ -438,8 +438,8 @@ static bool wrapWord(TerminalMarkdownView *self, MarkdownWrap *wrap, const char 
         }
         if (!appendSegment(self, text + at, take, 1u, role, style))
             return false;
-        wrap->x += used;
-        wrap->content = true;
+        (*wrap).x += used;
+        (*wrap).content = true;
         at += take;
         if (at < length && !wrapStart(self, wrap, false))
             return false;
@@ -448,9 +448,9 @@ static bool wrapWord(TerminalMarkdownView *self, MarkdownWrap *wrap, const char 
 }
 
 static bool wrapBreak(TerminalMarkdownView *self, MarkdownWrap *wrap) {
-    if (wrap == nullptr || !wrap->open || !wrap->content)
+    if (wrap == nullptr || !(*wrap).open || !(*wrap).content)
         return true;
-    wrap->pendingSpace = false;
+    (*wrap).pendingSpace = false;
     return wrapStart(self, wrap, false);
 }
 
