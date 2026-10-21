@@ -76,10 +76,10 @@ with no application content:
   tables use bordered panels, and callouts use a colored bold `⎸` section marker
   repeated on every wrapped row so the quote gutter stays visible.
   Rendering is allocation-free and consumes terminal-cell styles. It is a
-  deliberately limited GFM-ish subset, not
-  CommonMark: HTML layout, image rendering, reference links, footnotes, math,
-  nested tables and grapheme shaping are not implemented. The caller keeps source
-  lines alive until it clears or frees the view.
+   deliberately limited GFM-ish subset, not
+   CommonMark: HTML layout, image rendering, reference links, footnotes, math,
+   nested tables and grapheme shaping are not implemented. The caller keeps source
+   lines alive until it clears or frees the view.
 - `terminal_code_view` — a caller-fed painter for one UTF-8 source line. The host
   supplies ordered byte spans with terminal pens and optional virtual labels (for
   example parameter-name inlay hints); the renderer clips in cell coordinates and

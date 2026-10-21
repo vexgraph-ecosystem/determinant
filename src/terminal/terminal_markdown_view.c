@@ -16,8 +16,11 @@
  * fall back on. So headings become weight and accent, emphasis becomes bold and
  * underlined without printing its asterisks, inline code becomes green text without
  * a reverse-video box, lists become hanging indents, callouts become colored
- * sections marked by a bold left wall repeated on every wrapped row, and
- * fences/tables become bordered panels.
+ * sections marked by a bold left wall repeated on every wrapped row, and fences
+ * become full-width translucent grey bands with no box glyphs. Tables remain
+ * bordered. A code block is surrounded by one blank row above and below, and the
+ * same band is used when the fence sits inside a callout or blockquote.
+ * A callout has a separate, highlighted `! TYPE !` label row and an unbolded body.
  * The syntax markers themselves are
  * consumed by the parser and never printed.
  *
@@ -32,7 +35,15 @@
  * setext headings, paragraphs, strong/emphasis, inline code, links, images,
  * unordered/ordered/task lists, block quotes, fenced code, thematic breaks and
  * simple pipe tables. It does not lay out HTML, render images, resolve reference
- * links or footnotes, do math, nest tables, or shape grapheme clusters. Those are
+ * links or footnotes, do math, nest tables, or shape grapheme clusters. Table
+ * columns prefer their measured natural widths and wrap at word boundaries only
+ * when the whole table cannot fit the viewport; then available cells are divided
+ * in proportion to each column's content need. If even the longest-word minimums
+ * cannot fit, rows fall back to a vertically stacked label/value presentation
+ * rather than clipping source text.
+ * Ordered-list marker width comes from the full source span, with no fixed digit
+ * count; siblings align to the widest marker. Emoji and other wide scalars consume
+ * two terminal cells. Those are
  * stated limits, not accidents: the renderer must never pretend to a conformance
  * it does not have.
  *
@@ -60,6 +71,9 @@
  *   MarkdownSegment *segments  owned flat segment pool
  *   size_t segmentCount        live segments
  *   size_t segmentCapacity     admitted segment slots
+ *   MarkdownCodeBlockRecord *codeBlocks  owned laid-out fence bookkeeping
+ *   size_t codeBlockCount      fences in the current layout
+ *   size_t codeBlockCapacity   admitted fence slots
  *   TerminalMarkdownStyle style  role pens resolved at render time
  *   size_t refusals            cold allocation refusals in this epoch
  * SLOT RECORD: MarkdownSegment
@@ -71,6 +85,13 @@
  * SLOT RECORD: MarkdownRow
  *   size_t firstSegment        offset of this row's first segment
  *   size_t segmentCount        number of segments in this row
+ *   bool codeBlock             this row is part of a shaded fenced code block
+ * SLOT RECORD: MarkdownCodeBlockRecord
+ *   size_t firstRow            first shaded document row
+ *   size_t rowCount            shaded rows in this block
+ *   size_t firstSourceLine     first content line in the borrowed source
+ *   size_t sourceLineCount     content lines (fences excluded)
+ *   size_t quoteDepth          >0 when the fence sits inside a quote/callout
  * PRIVATE HELPERS
  *   MarkdownPrefixItem  const char *text (borrowed glyph span); size_t length
  *     (span bytes); size_t cells (display width); TerminalMarkdownRole role
@@ -79,17 +100,34 @@
  *     (live prefix entries); size_t markerStart (continuation boundary);
  *     size_t markerCount (marked entries); size_t cells (prefix width);
  *     size_t hang (continuation indent); bool repeatOnWrap (repeat quote gutter).
+ *   MarkdownListMarker  bool valid/ordered/task/taskDone; size_t indent,
+ *     contentStart, markerLength (admitted marker and content offset).
+ *   MarkdownCellLine  const char *text (borrowed cell slice); size_t length
+ *     (slice bytes); size_t next (next source byte offset); size_t cells
+ *     (display width of the slice).
  *   cellsOf/bytesForCells(text, length, ...)  cell-aware UTF-8 measurement
  *   refuse(self, reason)      count a cold refusal, reporting once per epoch
- *   growRows/growSegments(self)  cold doubling growth preserving live entries
+ *   growRows/growSegments/growCodeBlocks(self)  cold doubling growth preserving live entries
  *   appendRow/appendRowForced(self)  begin a wrapped row (the notice may bypass
  *                             the document limit by one)
  *   appendSegment(self, ...)  append to the open row
+ *   appendCodeBlock/markCodeRows(self, ...)  record a fence and shade its rows
+ *   fenceContentText(line, depth, ...)  strip quote markers from a copy line
  *   prefixSpaces/prefixQuote/prefixBeginMarker/prefixEndMarker
  *   wrapStart/wrapSpace/wrapWord/wrapBreak
  *   findBytes/findBacktickRun/emitInline
- *   emitGap/emitHeading/emitParagraphLine/emitFence/emitRule/emitList/emitQuote
- *   emitTable/splitTableRow/trimSpan; callouts use the > [!TYPE] quote form
+ *   emitGap/emitHeading/emitParagraphLine/emitFence/emitQuoteFence/emitRule
+ *   emitList/emitQuote
+ *   tableCellLine/tableCellLineCount/tableColumnMinimum/tableAllocateWidths
+ *   emitTableBorder/appendTableSpaces/emitTableRow/emitTableCompact/emitTable
+ *   /splitTableRow/trimSpan;
+ *   tables prefer each column's measured content width and proportionally
+ *   allocate viewport cells when the natural table does not fit; ordered list siblings share
+ *   the widest marker column so digit-count changes do not shift item text;
+ *   callouts use the > [!TYPE] form, with a bold yellow `! TYPE !` label row,
+ *   a blank gutter row, and body-role content that does not inherit quote bold;
+ *   a fenced block is a borderless full-width band painted under its text, with
+ *   blank rows around it; a fence inside a quote/callout keeps the quote gutter
  *   layout(self)              the cold parse + wrap pass
  * FUNCTION REGISTRY (exports)
  * Constructor: TerminalMarkdownView *TerminalMarkdownView_0(void) [arity chooser]
@@ -101,6 +139,9 @@
  * Scroll:      bool setScroll(self, row); size_t getScroll(self)
  *              bool scrollBy(self, delta)
  * Queries:     size_t rowCount/getWidth(self)
+ *              size_t codeBlockCount(self)
+ *              TerminalMarkdownCodeBlock codeBlockAt(self, row)
+ *              TerminalMarkdownCodeLine codeBlockLine(self, block, line)
  *              bool isReady/isTruncated(self)
  *              size_t exhaustionCount(self); void clearExhaustion(self)
  * Style:       bool setStyle(self, style); TerminalMarkdownStyle getStyle(self)
@@ -123,17 +164,25 @@
 #define MARKDOWN_SPACES_CAP 32u
 #define MARKDOWN_PREFIX_ITEMS 16u
 #define MARKDOWN_MAX_COLUMNS 16u
-#define MARKDOWN_MAX_COLUMN_CELLS 32u
 #define MARKDOWN_MAX_INLINE_DEPTH 8u
 #define MARKDOWN_NO_INDEX ((size_t) -1)
+// The code-block wash: a neutral grey at 40% alpha. It is composited over the
+// host's own backdrop by the device backend, so one value reads on a dark and on a
+// light theme. This is PRESENTATION, not content — nothing in the syntax depends
+// on it, and a caller can replace the fence pen's background through setStyle.
+#define MARKDOWN_CODE_BLOCK_BG TERMINAL_RGBA(0x8C, 0x91, 0x9C, 0x66)
+#define MARKDOWN_CODE_BLOCK_PAD 2u
 
 static const char *const MARKDOWN_SPACES =
     "                                ";
 static const char *const MARKDOWN_RULE_GLYPH = "─";
-static const char *const MARKDOWN_QUOTE_GLYPH = "⎸ ";
+static const char *const MARKDOWN_QUOTE_GLYPH = "| ";
 static const char *const MARKDOWN_BORDER_TOP = "┌";
 static const char *const MARKDOWN_BORDER_MIDDLE = "├";
 static const char *const MARKDOWN_BORDER_BOTTOM = "└";
+static const char *const MARKDOWN_BORDER_TOP_JOIN = "┬";
+static const char *const MARKDOWN_BORDER_MIDDLE_JOIN = "┼";
+static const char *const MARKDOWN_BORDER_BOTTOM_JOIN = "┴";
 static const char *const MARKDOWN_BORDER_RIGHT = "┐";
 static const char *const MARKDOWN_BORDER_RIGHT_MIDDLE = "┤";
 static const char *const MARKDOWN_BORDER_RIGHT_BOTTOM = "┘";
@@ -152,7 +201,18 @@ typedef struct MarkdownSegment {
 typedef struct MarkdownRow {
     size_t firstSegment;
     size_t segmentCount;
+    bool codeBlock;   // this row is part of a shaded fenced code block
 } MarkdownRow;
+
+// PRIVATE HELPER: MarkdownCodeBlockRecord (no behaviour).
+// Laid-out fence bookkeeping. `valid` is implicit (only appended records exist).
+typedef struct MarkdownCodeBlockRecord {
+    size_t firstRow;
+    size_t rowCount;
+    size_t firstSourceLine;
+    size_t sourceLineCount;
+    size_t quoteDepth;
+} MarkdownCodeBlockRecord;
 
 typedef struct MarkdownPrefixItem {
     const char *text;
@@ -190,8 +250,15 @@ typedef struct MarkdownListMarker {
     bool taskDone;
     size_t indent;
     size_t contentStart;
-    size_t number;
+    size_t markerLength;
 } MarkdownListMarker;
+
+typedef struct MarkdownCellLine {
+    const char *text;
+    size_t length;
+    size_t next;
+    size_t cells;
+} MarkdownCellLine;
 
 struct TerminalMarkdownView {
     const char *const *lines;
@@ -209,6 +276,9 @@ struct TerminalMarkdownView {
     MarkdownSegment *segments;
     size_t segmentCount;
     size_t segmentCapacity;
+    MarkdownCodeBlockRecord *codeBlocks;
+    size_t codeBlockCount;
+    size_t codeBlockCapacity;
     TerminalMarkdownStyle style;
     size_t refusals;
 };
@@ -302,6 +372,50 @@ static bool growSegments(TerminalMarkdownView *self) {
     return true;
 }
 
+static bool growCodeBlocks(TerminalMarkdownView *self) {
+    size_t next = (*self).codeBlockCapacity == 0 ? TERMINAL_MARKDOWN_SEGMENTS_DEFAULT
+                                                 : (*self).codeBlockCapacity * 2u;
+    if (next < (*self).codeBlockCapacity
+        || next > SIZE_MAX / sizeof(MarkdownCodeBlockRecord)) {
+        refuse(self, "code block capacity overflow");
+        return false;
+    }
+    MarkdownCodeBlockRecord *grown =
+        Memory_alloc(TYPE_BYTE_ARRAY, next * sizeof(MarkdownCodeBlockRecord));
+    if (grown == nullptr) {
+        refuse(self, "code block pool allocation refused");
+        return false;
+    }
+    if ((*self).codeBlockCapacity != 0)
+        memcpy(grown, (*self).codeBlocks,
+               (*self).codeBlockCapacity * sizeof(MarkdownCodeBlockRecord));
+    Memory_free((*self).codeBlocks);
+    (*self).codeBlocks = grown;
+    (*self).codeBlockCapacity = next;
+    return true;
+}
+
+static bool appendCodeBlock(TerminalMarkdownView *self, size_t firstRow, size_t rowCount,
+                            size_t firstSourceLine, size_t sourceLineCount, size_t quoteDepth) {
+    if (rowCount == 0)
+        return true;
+    if ((*self).codeBlockCount == (*self).codeBlockCapacity && !growCodeBlocks(self))
+        return false;
+    (*self).codeBlocks[(*self).codeBlockCount] =
+        (MarkdownCodeBlockRecord) { firstRow, rowCount, firstSourceLine, sourceLineCount,
+                                    quoteDepth };
+    ++(*self).codeBlockCount;
+    return true;
+}
+
+// Mark every row in [first, last) as a shaded code row. Wrapping can append rows
+// inside a single logical line, so the range is marked once the fence is complete
+// instead of trying to tag each row at creation.
+static void markCodeRows(TerminalMarkdownView *self, size_t first) {
+    for (size_t index = first; index < (*self).rowCount; ++index)
+        (*self).rows[index].codeBlock = true;
+}
+
 static bool appendRowInternal(TerminalMarkdownView *self, bool force) {
     if (!force && (*self).rowCount + 1u >= TERMINAL_MARKDOWN_ROWS_LIMIT) {
         (*self).truncated = true;
@@ -309,7 +423,7 @@ static bool appendRowInternal(TerminalMarkdownView *self, bool force) {
     }
     if ((*self).rowCount == (*self).rowCapacity && !growRows(self))
         return false;
-    (*self).rows[(*self).rowCount] = (MarkdownRow) { (*self).segmentCount, 0 };
+    (*self).rows[(*self).rowCount] = (MarkdownRow) { (*self).segmentCount, 0, false };
     ++(*self).rowCount;
     return true;
 }
@@ -364,7 +478,7 @@ static void prefixSpaces(MarkdownPrefix *prefix, size_t cells,
 static void prefixQuote(MarkdownPrefix *prefix, size_t depth) {
     for (size_t level = 0; level < depth && (*prefix).count < MARKDOWN_PREFIX_ITEMS; ++level)
         prefixAdd(prefix, MARKDOWN_QUOTE_GLYPH, strlen(MARKDOWN_QUOTE_GLYPH),
-                  TERMINAL_MARKDOWN_QUOTE, 0);
+                  TERMINAL_MARKDOWN_QUOTE, TERMINAL_STYLE_BOLD);
     (*prefix).repeatOnWrap = true;
 }
 
@@ -830,24 +944,20 @@ static MarkdownListMarker listMarker(const char *text, size_t length) {
     if (spaces >= length)
         return marker;
     size_t at = spaces;
-    size_t number = 0;
     bool ordered = false;
     if (text[at] == '-' || text[at] == '*' || text[at] == '+') {
         ++at;
     } else if (text[at] >= '0' && text[at] <= '9') {
-        size_t digits = 0;
-        while (at < length && text[at] >= '0' && text[at] <= '9' && digits < 9u) {
-            number = number * 10u + (size_t) (text[at] - '0');
+        while (at < length && text[at] >= '0' && text[at] <= '9')
             ++at;
-            ++digits;
-        }
-        if (digits == 0 || at >= length || (text[at] != '.' && text[at] != ')'))
+        if (at == spaces || at >= length || (text[at] != '.' && text[at] != ')'))
             return marker;
         ++at;
         ordered = true;
     } else {
         return marker;
     }
+    size_t markerEnd = at;
     if (at >= length || text[at] != ' ')
         return marker;
     ++at;
@@ -856,7 +966,7 @@ static MarkdownListMarker listMarker(const char *text, size_t length) {
     marker.valid = true;
     marker.ordered = ordered;
     marker.indent = spaces;
-    marker.number = number;
+    marker.markerLength = markerEnd - spaces + 1u;
     marker.contentStart = at;
     if (at + 3u < length && text[at] == '[' && text[at + 2u] == ']'
         && text[at + 3u] == ' ') {
@@ -873,10 +983,11 @@ static MarkdownListMarker listMarker(const char *text, size_t length) {
 static bool tableDelimiter(const char *text, size_t length, size_t *columns) {
     size_t count = 0;
     size_t at = 0;
-    bool sawDash = false;
     if (length == 0)
         return false;
-    while (at <= length) {
+    if (text[at] == '|')
+        ++at;
+    while (at < length) {
         size_t start = at;
         while (at < length && text[at] != '|')
             ++at;
@@ -885,13 +996,10 @@ static bool tableDelimiter(const char *text, size_t length, size_t *columns) {
             ++start, --cellLength;
         while (cellLength > 0 && isSpace(text[start + cellLength - 1u]))
             --cellLength;
-        if (cellLength == 0 && count == 0) {
-            if (at < length) {
-                ++at;
-                continue;
-            }
+        if (cellLength == 0 && count != 0 && at + 1u == length && text[at] == '|')
+            break;
+        if (cellLength == 0)
             return false;
-        }
         size_t colons = 0;
         size_t dashes = 0;
         for (size_t index = 0; index < cellLength; ++index) {
@@ -905,15 +1013,15 @@ static bool tableDelimiter(const char *text, size_t length, size_t *columns) {
         }
         if (colons > 2u || dashes < 1u)
             return false;
-        sawDash = true;
         ++count;
-        if (at < length)
-            ++at;
-        else
+        if (at == length)
+            break;
+        ++at;
+        if (at == length)
             break;
     }
     *columns = count;
-    return sawDash && count >= 2u;
+    return count >= 2u;
 }
 
 static bool tableCandidate(const char *text, size_t length, const char *next, size_t nextLength,
@@ -962,49 +1070,108 @@ static bool emitParagraphLine(TerminalMarkdownView *self, MarkdownWrap *wrap, co
     return emitInline(self, wrap, text, length, TERMINAL_MARKDOWN_BODY, 0, 0);
 }
 
+// Extract one DISPLAY/COPY line of a fenced block. A top-level fence uses the
+// source line verbatim (its indentation is code); a fence inside a quote strips the
+// quote markers first. False means the line does not carry the expected quote depth.
+static bool fenceContentText(const char *line, size_t quoteDepth, const char **text,
+                             size_t *length) {
+    size_t lineLength = strlen(line);
+    size_t start = 0;
+    if (quoteDepth != 0) {
+        size_t depth = 0;
+        size_t contentStart = 0;
+        if (!quoteLine(line, lineLength, &depth, &contentStart) || depth != quoteDepth)
+            return false;
+        start = contentStart;
+    }
+    if (start > lineLength)
+        start = lineLength;
+    *text = line + start;
+    *length = lineLength - start;
+    return true;
+}
+
 static bool emitFence(TerminalMarkdownView *self, const char *const *lines, size_t lineCount,
                       size_t *index, char marker, size_t run, size_t contentStart) {
+    (void) contentStart;
     if (!emitGap(self))
         return false;
-    if (!appendRow(self)
-        || !appendSegment(self, MARKDOWN_BORDER_TOP, strlen(MARKDOWN_BORDER_TOP), 1u,
-                          TERMINAL_MARKDOWN_FENCE, 0)
-        || !appendSegment(self, MARKDOWN_BORDER_HORIZONTAL, strlen(MARKDOWN_BORDER_HORIZONTAL),
-                          (*self).width > 2u ? (*self).width - 2u : 0u,
-                          TERMINAL_MARKDOWN_FENCE, 0)
-        || !appendSegment(self, MARKDOWN_BORDER_RIGHT, strlen(MARKDOWN_BORDER_RIGHT), 1u,
-                          TERMINAL_MARKDOWN_FENCE, 0))
-        return false;
+    size_t start = *index;
+    size_t at = start + 1u;
+    size_t contentEnd = at;
+    size_t firstRow = (*self).rowCount;
     MarkdownPrefix prefix = {0};
-    prefixAdd(&prefix, MARKDOWN_BORDER_VERTICAL, strlen(MARKDOWN_BORDER_VERTICAL),
-              TERMINAL_MARKDOWN_FENCE, 0);
-    prefixSpaces(&prefix, 1u, TERMINAL_MARKDOWN_FENCE, 0);
+    prefixSpaces(&prefix, MARKDOWN_CODE_BLOCK_PAD, TERMINAL_MARKDOWN_FENCE, 0);
+    prefix.repeatOnWrap = true;
     MarkdownWrap wrap = { .prefix = &prefix, .width = (*self).width };
-    (void) contentStart;
-    size_t at = *index + 1u;
     bool first = true;
     while (at < lineCount) {
         size_t length = strlen(lines[at]);
         if (isClosingFence(lines[at], length, marker, run)) {
+            contentEnd = at;
             ++at;
             break;
         }
+        contentEnd = at + 1u;
         if (!wrapStart(self, &wrap, first))
             return false;
         first = false;
-        if (length != 0 && !wrapWord(self, &wrap, lines[at], length, TERMINAL_MARKDOWN_FENCE, 0))
+        if (length != 0
+            && !wrapWord(self, &wrap, lines[at], length, TERMINAL_MARKDOWN_FENCE, 0))
             return false;
         ++at;
     }
-    if (!appendRow(self)
-        || !appendSegment(self, MARKDOWN_BORDER_BOTTOM, strlen(MARKDOWN_BORDER_BOTTOM), 1u,
-                          TERMINAL_MARKDOWN_FENCE, 0)
-        || !appendSegment(self, MARKDOWN_BORDER_HORIZONTAL, strlen(MARKDOWN_BORDER_HORIZONTAL),
-                          (*self).width > 2u ? (*self).width - 2u : 0u,
-                          TERMINAL_MARKDOWN_FENCE, 0)
-        || !appendSegment(self, MARKDOWN_BORDER_RIGHT_BOTTOM,
-                          strlen(MARKDOWN_BORDER_RIGHT_BOTTOM), 1u,
-                          TERMINAL_MARKDOWN_FENCE, 0))
+    markCodeRows(self, firstRow);
+    if (!appendCodeBlock(self, firstRow, (*self).rowCount - firstRow, start + 1u,
+                         contentEnd - (start + 1u), 0))
+        return false;
+    if (!emitGap(self))
+        return false;
+    *index = at;
+    return true;
+}
+
+// A fence INSIDE a blockquote/callout: the quote gutter repeats on every shaded
+// row, the code content has its quote markers stripped, and the copy projection
+// remembers the depth so it can strip them too.
+static bool emitQuoteFence(TerminalMarkdownView *self, const char *const *lines,
+                           size_t lineCount, size_t *index, char marker, size_t run,
+                           size_t quoteDepth) {
+    size_t start = *index;
+    size_t at = start + 1u;
+    size_t contentEnd = at;
+    size_t firstRow = (*self).rowCount;
+    MarkdownPrefix prefix = {0};
+    prefixQuote(&prefix, quoteDepth);
+    prefix.repeatOnWrap = true;
+    MarkdownWrap wrap = { .prefix = &prefix, .width = (*self).width };
+    bool first = true;
+    while (at < lineCount) {
+        const char *line = lines[at];
+        size_t length = strlen(line);
+        size_t depth = 0;
+        size_t lineContent = 0;
+        if (!quoteLine(line, length, &depth, &lineContent) || depth != quoteDepth)
+            break;
+        if (isClosingFence(line + lineContent, length - lineContent, marker, run)) {
+            contentEnd = at;
+            ++at;
+            break;
+        }
+        contentEnd = at + 1u;
+        size_t textLength = length - lineContent;
+        if (!wrapStart(self, &wrap, first))
+            return false;
+        first = false;
+        if (textLength != 0
+            && !wrapWord(self, &wrap, line + lineContent, textLength,
+                         TERMINAL_MARKDOWN_FENCE, 0))
+            return false;
+        ++at;
+    }
+    markCodeRows(self, firstRow);
+    if (!appendCodeBlock(self, firstRow, (*self).rowCount - firstRow, start + 1u,
+                         contentEnd - (start + 1u), quoteDepth))
         return false;
     *index = at;
     return true;
@@ -1020,22 +1187,48 @@ static bool emitList(TerminalMarkdownView *self, const char *const *lines, size_
         MarkdownListMarker marker = listMarker(lines[at], length);
         if (!marker.valid)
             break;
+        size_t orderedMarkerWidth = marker.ordered ? marker.markerLength : 0u;
+        if (marker.ordered) {
+            size_t scan = at + 1u;
+            while (scan < lineCount) {
+                size_t scanLength = strlen(lines[scan]);
+                if (lineBlank(lines[scan], scanLength)) {
+                    ++scan;
+                    continue;
+                }
+                MarkdownListMarker candidate = listMarker(lines[scan], scanLength);
+                if (candidate.valid) {
+                    if (candidate.ordered && candidate.indent == marker.indent
+                        && candidate.markerLength > orderedMarkerWidth)
+                        orderedMarkerWidth = candidate.markerLength;
+                    if (candidate.indent <= marker.indent)
+                        ++scan;
+                    else
+                        break;
+                    continue;
+                }
+                if (leadingSpaces(lines[scan], scanLength) < marker.contentStart)
+                    break;
+                ++scan;
+            }
+        }
         MarkdownPrefix prefix = {0};
         size_t indent = marker.indent;
         if (indent > (*self).width / 2u)
             indent = (*self).width / 2u;
         prefixSpaces(&prefix, indent, TERMINAL_MARKDOWN_BODY, 0);
         prefixBeginMarker(&prefix);
-        char label[16];
         if (marker.task) {
             prefixAdd(&prefix, marker.taskDone ? "☑ " : "☐ ", 4u,
                       TERMINAL_MARKDOWN_MARKER, 0);
         } else if (marker.ordered) {
-            int written = snprintf(label, sizeof label, "%zu. ", marker.number);
-            if (written > 0)
-                prefixAdd(&prefix, label, (size_t) written, TERMINAL_MARKDOWN_MARKER, 0);
+            if (orderedMarkerWidth > marker.markerLength)
+                prefixSpaces(&prefix, orderedMarkerWidth - marker.markerLength,
+                             TERMINAL_MARKDOWN_BODY, 0);
+            prefixAdd(&prefix, lines[at] + marker.indent, marker.markerLength,
+                      TERMINAL_MARKDOWN_MARKER, 0);
         } else {
-            prefixAdd(&prefix, "• ", 3u, TERMINAL_MARKDOWN_MARKER, 0);
+            prefixAdd(&prefix, "• ", strlen("• "), TERMINAL_MARKDOWN_MARKER, 0);
         }
         prefixEndMarker(&prefix);
         MarkdownWrap wrap = { .prefix = &prefix, .width = (*self).width };
@@ -1097,6 +1290,26 @@ static bool emitQuote(TerminalMarkdownView *self, const char *const *lines, size
             break;
         if (lineDepth != depth)
             break;
+        // A fence inside the quote is still a fence: strip the quote markers, shade
+        // the same block band, and keep the quote gutter on every row. Callouts use
+        // this path too, so a WARNING can contain a real code block.
+        char fenceMarker = 0;
+        size_t fenceRun = 0;
+        size_t fenceOffset = 0;
+        if (isFence(lines[at] + lineContent, length - lineContent,
+                    &fenceMarker, &fenceRun, &fenceOffset)) {
+            if (!emitGap(self))
+                return false;
+            wrap.open = false;
+            wrap.started = false;
+            wrap.pendingSpace = false;
+            wrap.content = false;
+            if (!emitQuoteFence(self, lines, lineCount, &at, fenceMarker, fenceRun, depth))
+                return false;
+            if (!emitGap(self))
+                return false;
+            continue;
+        }
         size_t end = trimRight(lines[at], length);
         if (!callout && end - lineContent >= 5u
             && lines[at][lineContent] == '[' && lines[at][lineContent + 1u] == '!') {
@@ -1106,14 +1319,24 @@ static bool emitQuote(TerminalMarkdownView *self, const char *const *lines, size
             if (close < end && close > lineContent + 2u) {
                 callout = true;
                 if (!wrapStart(self, &wrap, true)
+                    || !appendSegment(self, "! ", 2u, 1u,
+                                      TERMINAL_MARKDOWN_MARKER, TERMINAL_STYLE_BOLD)
                     || !appendSegment(self, lines[at] + lineContent + 2u,
                                       close - lineContent - 2u, 1u,
+                                      TERMINAL_MARKDOWN_MARKER, TERMINAL_STYLE_BOLD)
+                    || !appendSegment(self, " !", 2u, 1u,
                                       TERMINAL_MARKDOWN_MARKER, TERMINAL_STYLE_BOLD))
                     return false;
+                wrap.x += 2u + cellsOf(lines[at] + lineContent + 2u,
+                                       close - lineContent - 2u) + 2u;
+                wrap.content = true;
+                if (!wrapBreak(self, &wrap))
+                    return false;
+                wrap.open = false;
+                wrap.pendingSpace = false;
                 if (close + 1u < end) {
-                    wrapSpace(&wrap);
                     if (!emitInline(self, &wrap, lines[at] + close + 1u,
-                                    end - close - 1u, TERMINAL_MARKDOWN_QUOTE, 0, 0))
+                                    end - close - 1u, TERMINAL_MARKDOWN_BODY, 0, 0))
                         return false;
                 }
                 ++at;
@@ -1123,7 +1346,8 @@ static bool emitQuote(TerminalMarkdownView *self, const char *const *lines, size
         if (end > lineContent) {
             wrapSpace(&wrap);
             if (!emitInline(self, &wrap, lines[at] + lineContent, end - lineContent,
-                            TERMINAL_MARKDOWN_QUOTE, 0, 0))
+                            callout ? TERMINAL_MARKDOWN_BODY : TERMINAL_MARKDOWN_QUOTE,
+                            0, 0))
                 return false;
         } else if (!wrap.open) {
             if (!wrapStart(self, &wrap, !wrap.started))
@@ -1166,98 +1390,241 @@ static void tableCells(const char *text, size_t length, const char **cells, size
     *count = total;
 }
 
-static bool emitTable(TerminalMarkdownView *self, const char *const *lines, size_t lineCount,
-                      size_t *index, size_t columns) {
-    if (columns > MARKDOWN_MAX_COLUMNS)
-        columns = MARKDOWN_MAX_COLUMNS;
-    size_t widths[MARKDOWN_MAX_COLUMNS] = {0};
-    size_t rowStarts[MARKDOWN_MAX_COLUMNS];
-    size_t rowCount = 0;
-    size_t at = *index;
+static MarkdownCellLine tableCellLine(const char *text, size_t length, size_t offset,
+                                      size_t width) {
+    MarkdownCellLine line = { .text = text + length, .next = length };
+    while (offset < length && isSpace(text[offset]))
+        ++offset;
+    line.text = text + offset;
+    if (offset == length)
+        return line;
+    size_t at = offset;
+    size_t used = 0;
+    size_t lastSpace = MARKDOWN_NO_INDEX;
+    size_t afterSpace = MARKDOWN_NO_INDEX;
+    while (at < length) {
+        if (isSpace(text[at]) && at > offset) {
+            lastSpace = at;
+            afterSpace = at + 1u;
+            while (afterSpace < length && isSpace(text[afterSpace]))
+                ++afterSpace;
+        }
+        TerminalCanvasDecodedScalar decoded = TerminalCanvas_utf8Decode(text + at, length - at);
+        size_t bytes = decoded.bytes == 0 ? 1u : decoded.bytes;
+        size_t glyphCells = decoded.bytes == 0 ? 1u
+                          : TerminalCanvas_widthOf(decoded.codepoint);
+        if (glyphCells > width - (used < width ? used : width)) {
+            if (lastSpace != MARKDOWN_NO_INDEX) {
+                line.length = lastSpace - offset;
+                line.next = afterSpace;
+                line.cells = cellsOf(line.text, line.length);
+                return line;
+            }
+            if (at == offset) {
+                at += bytes;
+                used += glyphCells;
+            }
+            line.length = at - offset;
+            line.next = at;
+            line.cells = used;
+            return line;
+        }
+        used += glyphCells;
+        at += bytes;
+    }
+    line.length = at - offset;
+    line.next = length;
+    line.cells = used;
+    return line;
+}
+
+static size_t tableCellLineCount(const char *text, size_t length, size_t width) {
+    size_t offset = 0;
+    size_t count = 0;
+    do {
+        MarkdownCellLine line = tableCellLine(text, length, offset, width);
+        ++count;
+        if (line.next >= length || line.next <= offset)
+            break;
+        offset = line.next;
+    } while (offset < length);
+    return count;
+}
+
+static size_t tableColumnMinimum(const char *const *lines, size_t first, size_t end,
+                                 size_t column) {
     const char *cells[MARKDOWN_MAX_COLUMNS];
     size_t lengths[MARKDOWN_MAX_COLUMNS];
     size_t count = 0;
-    tableCells(lines[at], strlen(lines[at]), cells, lengths, &count);
-    for (size_t column = 0; column < columns && column < count; ++column) {
-        size_t width = cellsOf(cells[column], lengths[column]);
-        if (width > widths[column])
-            widths[column] = width;
-    }
-    rowStarts[rowCount++] = at;
-    at += 2u;
-    while (at < lineCount) {
-        size_t length = strlen(lines[at]);
-        if (lineBlank(lines[at], length) || findBytes(lines[at], length, 0, "|", 1u) == MARKDOWN_NO_INDEX)
-            break;
-        tableCells(lines[at], length, cells, lengths, &count);
-        for (size_t column = 0; column < columns && column < count; ++column) {
-            size_t width = cellsOf(cells[column], lengths[column]);
-            if (width > widths[column])
-                widths[column] = width;
+    size_t minimum = 0;
+    for (size_t row = first; row < end; ++row) {
+        tableCells(lines[row], strlen(lines[row]), cells, lengths, &count);
+        if (column >= count)
+            continue;
+        size_t at = 0;
+        size_t wordCells = 0;
+        while (at <= lengths[column]) {
+            if (at == lengths[column] || isSpace(cells[column][at])) {
+                if (wordCells > minimum)
+                    minimum = wordCells;
+                wordCells = 0;
+                ++at;
+                continue;
+            }
+            TerminalCanvasDecodedScalar decoded = TerminalCanvas_utf8Decode(
+                cells[column] + at, lengths[column] - at);
+            size_t bytes = decoded.bytes == 0 ? 1u : decoded.bytes;
+            wordCells += decoded.bytes == 0 ? 1u
+                         : TerminalCanvas_widthOf(decoded.codepoint);
+            at += bytes;
         }
-        if (rowCount < MARKDOWN_MAX_COLUMNS)
-            rowStarts[rowCount++] = at;
-        ++at;
     }
-    for (size_t column = 0; column < columns; ++column)
-        if (widths[column] > MARKDOWN_MAX_COLUMN_CELLS)
-            widths[column] = MARKDOWN_MAX_COLUMN_CELLS;
-    size_t total = columns > 1u ? (columns - 1u) * 2u : 0u;
-    for (size_t column = 0; column < columns; ++column)
-        total += widths[column];
-    while (total > (*self).width && columns != 0) {
-        size_t widest = 0;
-        for (size_t column = 1; column < columns; ++column)
-            if (widths[column] > widths[widest])
-                widest = column;
-        if (widths[widest] <= 3u)
+    return minimum == 0u ? 1u : minimum;
+}
+
+static bool tableAllocateWidths(const size_t *needed, const size_t *minimums,
+                                size_t *widths, size_t columns, size_t viewport) {
+    size_t overhead = columns * 3u + 1u;
+    if (viewport <= overhead)
+        return false;
+    size_t available = viewport - overhead;
+    size_t neededTotal = 0;
+    size_t minimumTotal = 0;
+    bool neededFits = true;
+    bool minimumsFit = true;
+    for (size_t column = 0; column < columns; ++column) {
+        if (needed[column] > available - neededTotal) {
+            neededFits = false;
+            neededTotal = available;
+        } else if (neededFits) {
+            neededTotal += needed[column];
+        }
+        if (minimums[column] > available - minimumTotal) {
+            minimumsFit = false;
+            minimumTotal = available;
+        } else if (minimumsFit) {
+            minimumTotal += minimums[column];
+        }
+        widths[column] = minimums[column];
+    }
+    if (!minimumsFit)
+        return false;
+    if (neededFits) {
+        for (size_t column = 0; column < columns; ++column)
+            widths[column] = needed[column];
+        return true;
+    }
+    size_t extraBudget = available - minimumTotal;
+    size_t remainingNeed = 0;
+    for (size_t column = 0; column < columns; ++column) {
+        size_t extra = needed[column] > minimums[column]
+                     ? needed[column] - minimums[column] : 0u;
+        if (extra > SIZE_MAX - remainingNeed)
+            remainingNeed = SIZE_MAX;
+        else
+            remainingNeed += extra;
+    }
+    if (remainingNeed == 0u)
+        return true;
+    size_t used = 0;
+    long double fractions[MARKDOWN_MAX_COLUMNS] = {0};
+    for (size_t column = 0; column < columns; ++column) {
+        size_t extra = needed[column] > minimums[column]
+                     ? needed[column] - minimums[column] : 0u;
+        long double share = (long double) extraBudget * (long double) extra
+                          / (long double) remainingNeed;
+        size_t whole = (size_t) share;
+        if (whole > extra)
+            whole = extra;
+        widths[column] += whole;
+        used += whole;
+        fractions[column] = whole == extra ? -1.0L : share - (long double) whole;
+    }
+    while (used < extraBudget) {
+        size_t chosen = MARKDOWN_NO_INDEX;
+        for (size_t column = 0; column < columns; ++column)
+            if (fractions[column] >= 0.0L
+                && (chosen == MARKDOWN_NO_INDEX || fractions[column] > fractions[chosen]))
+                chosen = column;
+        if (chosen == MARKDOWN_NO_INDEX)
             break;
-        --widths[widest];
-        --total;
+        ++widths[chosen];
+        ++used;
+        fractions[chosen] = -1.0L;
     }
-    if (!emitGap(self))
-        return false;
+    return true;
+}
+
+static bool emitTableBorder(TerminalMarkdownView *self, const size_t *widths,
+                            size_t columns, size_t kind) {
+    const char *left = kind == 0u ? MARKDOWN_BORDER_TOP
+                      : kind == 1u ? MARKDOWN_BORDER_MIDDLE : MARKDOWN_BORDER_BOTTOM;
+    const char *join = kind == 0u ? MARKDOWN_BORDER_TOP_JOIN
+                      : kind == 1u ? MARKDOWN_BORDER_MIDDLE_JOIN : MARKDOWN_BORDER_BOTTOM_JOIN;
+    const char *right = kind == 0u ? MARKDOWN_BORDER_RIGHT
+                       : kind == 1u ? MARKDOWN_BORDER_RIGHT_MIDDLE
+                                    : MARKDOWN_BORDER_RIGHT_BOTTOM;
     if (!appendRow(self)
-        || !appendSegment(self, MARKDOWN_BORDER_TOP, strlen(MARKDOWN_BORDER_TOP), 1u,
-                          TERMINAL_MARKDOWN_RULE, 0)
-        || !appendSegment(self, MARKDOWN_BORDER_HORIZONTAL, strlen(MARKDOWN_BORDER_HORIZONTAL),
-                          total, TERMINAL_MARKDOWN_RULE, 0)
-        || !appendSegment(self, MARKDOWN_BORDER_RIGHT, strlen(MARKDOWN_BORDER_RIGHT), 1u,
-                          TERMINAL_MARKDOWN_RULE, 0))
+        || !appendSegment(self, left, strlen(left), 1u, TERMINAL_MARKDOWN_RULE, 0))
         return false;
-    for (size_t row = 0; row < rowCount; ++row) {
-        size_t line = rowStarts[row];
-        tableCells(lines[line], strlen(lines[line]), cells, lengths, &count);
-        if (!appendRow(self))
-            return false;
-        if (!appendSegment(self, MARKDOWN_BORDER_VERTICAL,
-                           strlen(MARKDOWN_BORDER_VERTICAL), 1u,
+    for (size_t column = 0; column < columns; ++column) {
+        if (!appendSegment(self, MARKDOWN_BORDER_HORIZONTAL,
+                           strlen(MARKDOWN_BORDER_HORIZONTAL), widths[column] + 2u,
                            TERMINAL_MARKDOWN_RULE, 0))
             return false;
+        if (column + 1u < columns
+            && !appendSegment(self, join, strlen(join), 1u, TERMINAL_MARKDOWN_RULE, 0))
+            return false;
+    }
+    return appendSegment(self, right, strlen(right), 1u, TERMINAL_MARKDOWN_RULE, 0);
+}
+
+static bool appendTableSpaces(TerminalMarkdownView *self, size_t cells) {
+    while (cells != 0u) {
+        size_t chunk = cells > MARKDOWN_SPACES_CAP ? MARKDOWN_SPACES_CAP : cells;
+        if (!appendSegment(self, MARKDOWN_SPACES, chunk, 1u,
+                           TERMINAL_MARKDOWN_BODY, 0))
+            return false;
+        cells -= chunk;
+    }
+    return true;
+}
+
+static bool emitTableRow(TerminalMarkdownView *self, const char *const *cells,
+                         const size_t *lengths, size_t count, size_t columns,
+                         const size_t *widths, bool heading) {
+    size_t offsets[MARKDOWN_MAX_COLUMNS] = {0};
+    size_t heights[MARKDOWN_MAX_COLUMNS];
+    for (size_t column = 0; column < columns; ++column)
+        heights[column] = column < count
+                        ? tableCellLineCount(cells[column], lengths[column], widths[column])
+                        : 1u;
+    size_t rowHeight = 1u;
+    for (size_t column = 0; column < columns; ++column)
+        if (heights[column] > rowHeight)
+            rowHeight = heights[column];
+    for (size_t visualRow = 0; visualRow < rowHeight; ++visualRow) {
+        if (!appendRow(self)
+            || !appendSegment(self, MARKDOWN_BORDER_VERTICAL,
+                              strlen(MARKDOWN_BORDER_VERTICAL), 1u,
+                              TERMINAL_MARKDOWN_RULE, 0)
+            || !appendSegment(self, " ", 1u, 1u, TERMINAL_MARKDOWN_BODY, 0))
+            return false;
         for (size_t column = 0; column < columns; ++column) {
-            const char *cell = column < count ? cells[column] : "";
-            size_t cellLength = column < count ? lengths[column] : 0u;
-            size_t available = widths[column];
-            size_t used = 0;
-            size_t take = bytesForCells(cell, cellLength, available, &used);
-            if (take < cellLength && available > 1u) {
-                size_t keep = bytesForCells(cell, cellLength, available - 1u, &used);
-                if (!appendSegment(self, cell, keep, 1u,
-                                   row == 0 ? TERMINAL_MARKDOWN_HEADING : TERMINAL_MARKDOWN_BODY, 0))
+            MarkdownCellLine line = {0};
+            if (visualRow < heights[column]) {
+                const char *cell = column < count ? cells[column] : "";
+                size_t length = column < count ? lengths[column] : 0u;
+                line = tableCellLine(cell, length, offsets[column], widths[column]);
+                offsets[column] = line.next;
+                if (!appendSegment(self, line.text, line.length, 1u,
+                                   heading ? TERMINAL_MARKDOWN_HEADING
+                                           : TERMINAL_MARKDOWN_BODY, 0))
                     return false;
-                if (!appendSegment(self, "…", 3u, 1u,
-                                   row == 0 ? TERMINAL_MARKDOWN_HEADING : TERMINAL_MARKDOWN_BODY, 0))
-                    return false;
-                used += 1u;
-            } else if (!appendSegment(self, cell, take, 1u,
-                                      row == 0 ? TERMINAL_MARKDOWN_HEADING : TERMINAL_MARKDOWN_BODY, 0)) {
+            }
+            if (line.cells < widths[column]
+                && !appendTableSpaces(self, widths[column] - line.cells))
                 return false;
-            }
-            if (used < available) {
-                if (!appendSegment(self, MARKDOWN_SPACES, available - used, 1u,
-                                   TERMINAL_MARKDOWN_BODY, 0))
-                    return false;
-            }
             if (column + 1u < columns) {
                 if (!appendSegment(self, " ", 1u, 1u, TERMINAL_MARKDOWN_BODY, 0)
                     || !appendSegment(self, MARKDOWN_BORDER_VERTICAL,
@@ -1267,35 +1634,113 @@ static bool emitTable(TerminalMarkdownView *self, const char *const *lines, size
                     return false;
             }
         }
-        if (!appendSegment(self, MARKDOWN_BORDER_VERTICAL,
-                           strlen(MARKDOWN_BORDER_VERTICAL), 1u,
-                           TERMINAL_MARKDOWN_RULE, 0))
+        if (!appendSegment(self, " ", 1u, 1u, TERMINAL_MARKDOWN_BODY, 0)
+            || !appendSegment(self, MARKDOWN_BORDER_VERTICAL,
+                              strlen(MARKDOWN_BORDER_VERTICAL), 1u,
+                              TERMINAL_MARKDOWN_RULE, 0))
             return false;
-        if (row == 0) {
-            if (!appendRow(self))
+    }
+    return true;
+}
+
+static bool emitTableCompact(TerminalMarkdownView *self, const char *const *lines,
+                             size_t header, size_t end, size_t columns) {
+    const char *headers[MARKDOWN_MAX_COLUMNS];
+    size_t headerLengths[MARKDOWN_MAX_COLUMNS];
+    size_t headerCount = 0;
+    tableCells(lines[header], strlen(lines[header]), headers, headerLengths, &headerCount);
+    if (!emitGap(self))
+        return false;
+    for (size_t row = header + 2u; row < end; ++row) {
+        const char *cells[MARKDOWN_MAX_COLUMNS];
+        size_t lengths[MARKDOWN_MAX_COLUMNS];
+        size_t count = 0;
+        tableCells(lines[row], strlen(lines[row]), cells, lengths, &count);
+        for (size_t column = 0; column < columns; ++column) {
+            MarkdownPrefix prefix = {0};
+            MarkdownWrap wrap = { .prefix = &prefix, .width = (*self).width };
+            if (column < headerCount && headerLengths[column] != 0u) {
+                if (!emitInline(self, &wrap, headers[column], headerLengths[column],
+                                TERMINAL_MARKDOWN_HEADING, 0, 0))
+                    return false;
+                wrapSpace(&wrap);
+                if (!appendPlain(self, &wrap, ":", 1u, TERMINAL_MARKDOWN_BODY, 0))
+                    return false;
+                wrapSpace(&wrap);
+            }
+            if (column < count && lengths[column] != 0u) {
+                if (!emitInline(self, &wrap, cells[column], lengths[column],
+                                TERMINAL_MARKDOWN_BODY, 0, 0))
+                    return false;
+            } else if (!wrapStart(self, &wrap, true)) {
                 return false;
-            if (!appendSegment(self, MARKDOWN_BORDER_MIDDLE,
-                               strlen(MARKDOWN_BORDER_MIDDLE), 1u,
-                               TERMINAL_MARKDOWN_RULE, 0)
-                || !appendSegment(self, MARKDOWN_BORDER_HORIZONTAL,
-                                  strlen(MARKDOWN_BORDER_HORIZONTAL), total,
-                                  TERMINAL_MARKDOWN_RULE, 0)
-                || !appendSegment(self, MARKDOWN_BORDER_RIGHT_MIDDLE,
-                                  strlen(MARKDOWN_BORDER_RIGHT_MIDDLE), 1u,
-                                  TERMINAL_MARKDOWN_RULE, 0))
-                return false;
+            }
         }
     }
-    if (!appendRow(self)
-        || !appendSegment(self, MARKDOWN_BORDER_BOTTOM, strlen(MARKDOWN_BORDER_BOTTOM), 1u,
-                          TERMINAL_MARKDOWN_RULE, 0)
-        || !appendSegment(self, MARKDOWN_BORDER_HORIZONTAL, strlen(MARKDOWN_BORDER_HORIZONTAL),
-                          total, TERMINAL_MARKDOWN_RULE, 0)
-        || !appendSegment(self, MARKDOWN_BORDER_RIGHT_BOTTOM,
-                          strlen(MARKDOWN_BORDER_RIGHT_BOTTOM), 1u,
-                          TERMINAL_MARKDOWN_RULE, 0))
+    return true;
+}
+
+static bool emitTable(TerminalMarkdownView *self, const char *const *lines, size_t lineCount,
+                      size_t *index, size_t columns) {
+    if (columns > MARKDOWN_MAX_COLUMNS)
+        columns = MARKDOWN_MAX_COLUMNS;
+    size_t widths[MARKDOWN_MAX_COLUMNS] = {0};
+    size_t needed[MARKDOWN_MAX_COLUMNS] = {0};
+    size_t minimums[MARKDOWN_MAX_COLUMNS];
+    size_t header = *index;
+    size_t body = header + 2u;
+    size_t end = body;
+    const char *cells[MARKDOWN_MAX_COLUMNS];
+    size_t lengths[MARKDOWN_MAX_COLUMNS];
+    size_t count = 0;
+    tableCells(lines[header], strlen(lines[header]), cells, lengths, &count);
+    for (size_t column = 0; column < columns && column < count; ++column) {
+        size_t width = cellsOf(cells[column], lengths[column]);
+        if (width > needed[column])
+            needed[column] = width;
+    }
+    while (end < lineCount) {
+        size_t length = strlen(lines[end]);
+        if (lineBlank(lines[end], length)
+            || findBytes(lines[end], length, 0, "|", 1u) == MARKDOWN_NO_INDEX)
+            break;
+        tableCells(lines[end], length, cells, lengths, &count);
+        for (size_t column = 0; column < columns && column < count; ++column) {
+            size_t width = cellsOf(cells[column], lengths[column]);
+            if (width > needed[column])
+                needed[column] = width;
+        }
+        ++end;
+    }
+    for (size_t column = 0; column < columns; ++column) {
+        if (needed[column] == 0u)
+            needed[column] = 1u;
+        minimums[column] = tableColumnMinimum(lines, header, end, column);
+    }
+    if (!tableAllocateWidths(needed, minimums, widths, columns, (*self).width)) {
+        if (!emitTableCompact(self, lines, header, end, columns))
+            return false;
+        *index = end;
+        return true;
+    }
+    if (!emitGap(self))
         return false;
-    *index = at;
+    if (!emitTableBorder(self, widths, columns, 0u))
+        return false;
+    tableCells(lines[header], strlen(lines[header]), cells, lengths, &count);
+    if (!emitTableRow(self, cells, lengths, count, columns, widths, true)
+        || !emitTableBorder(self, widths, columns, 1u))
+        return false;
+    for (size_t row = body; row < end; ++row) {
+        tableCells(lines[row], strlen(lines[row]), cells, lengths, &count);
+        if (!emitTableRow(self, cells, lengths, count, columns, widths, false))
+            return false;
+        if (!emitTableBorder(self, widths, columns, row + 1u < end ? 1u : 2u))
+            return false;
+    }
+    if (body == end && !emitTableBorder(self, widths, columns, 2u))
+        return false;
+    *index = end;
     return true;
 }
 
@@ -1320,6 +1765,7 @@ static bool startsBlock(const char *text, size_t length) {
 }
 
 static bool layout(TerminalMarkdownView *self) {
+    (*self).codeBlockCount = 0;
     size_t index = 0;
     while (index < (*self).lineCount && !(*self).failed && !(*self).truncated) {
         const char *line = (*self).lines[index];
@@ -1440,7 +1886,8 @@ TerminalMarkdownView *TerminalMarkdownView_0(void) {
     (*self).style.quote = TerminalPen_2(TERMINAL_STYLE_BOLD, TERMINAL_RGB(105, 190, 220));
     (*self).style.rule = TerminalPen_1(TERMINAL_STYLE_DIM);
     (*self).style.marker = TerminalPen_2(TERMINAL_STYLE_BOLD, TERMINAL_RGB(235, 190, 95));
-    (*self).style.fence = TerminalPen_1(TERMINAL_STYLE_DIM);
+    (*self).style.fence =
+        TerminalPen_3(TERMINAL_STYLE_DIM, TERMINAL_COLOR_DEFAULT, MARKDOWN_CODE_BLOCK_BG);
     return self;
 }
 
@@ -1449,6 +1896,7 @@ void TerminalMarkdownView_free(TerminalMarkdownView *self) {
         return;
     Memory_free((*self).rows);
     Memory_free((*self).segments);
+    Memory_free((*self).codeBlocks);
     Memory_free(self);
 }
 
@@ -1475,6 +1923,7 @@ bool TerminalMarkdownView_setSource(TerminalMarkdownView *self, const char *cons
     (*self).failed = false;
     (*self).rowCount = 0;
     (*self).segmentCount = 0;
+    (*self).codeBlockCount = 0;
     (*self).scroll = 0;
     return true;
 }
@@ -1497,6 +1946,7 @@ bool TerminalMarkdownView_setViewport(TerminalMarkdownView *self, size_t width) 
     (*self).failed = false;
     (*self).rowCount = 0;
     (*self).segmentCount = 0;
+    (*self).codeBlockCount = 0;
     if ((*self).lines == nullptr || (*self).lineCount == 0) {
         (*self).ready = true;
         (*self).scroll = 0;
@@ -1576,6 +2026,54 @@ bool TerminalMarkdownView_scrollBy(TerminalMarkdownView *self, long delta) {
     return true;
 }
 
+size_t TerminalMarkdownView_codeBlockCount(const TerminalMarkdownView *self) {
+    return self != nullptr ? (*self).codeBlockCount : 0u;
+}
+
+TerminalMarkdownCodeBlock TerminalMarkdownView_codeBlockAt(const TerminalMarkdownView *self,
+                                                           size_t row) {
+    TerminalMarkdownCodeBlock none = {0};
+    if (self == nullptr)
+        return none;
+    size_t low = 0;
+    size_t high = (*self).codeBlockCount;
+    while (low < high) {
+        size_t mid = low + (high - low) / 2u;
+        const MarkdownCodeBlockRecord *block = &(*self).codeBlocks[mid];
+        if (row < (*block).firstRow) {
+            high = mid;
+            continue;
+        }
+        if (row - (*block).firstRow >= (*block).rowCount) {
+            low = mid + 1u;
+            continue;
+        }
+        return (TerminalMarkdownCodeBlock) {
+            true, (*block).firstRow, (*block).rowCount, (*block).firstSourceLine,
+            (*block).sourceLineCount, (*block).quoteDepth
+        };
+    }
+    return none;
+}
+
+TerminalMarkdownCodeLine TerminalMarkdownView_codeBlockLine(const TerminalMarkdownView *self,
+                                                            TerminalMarkdownCodeBlock block,
+                                                            size_t line) {
+    TerminalMarkdownCodeLine none = {0};
+    if (self == nullptr || !block.valid || line >= block.sourceLineCount)
+        return none;
+    if (block.firstSourceLine > SIZE_MAX - line)
+        return none;
+    size_t sourceLine = block.firstSourceLine + line;
+    if (sourceLine >= (*self).lineCount)
+        return none;
+    const char *text = nullptr;
+    size_t length = 0;
+    if (!fenceContentText((*self).lines[sourceLine], block.quoteDepth, &text, &length))
+        return none;
+    return (TerminalMarkdownCodeLine) { true, text, length };
+}
+
 bool TerminalMarkdownView_isReady(const TerminalMarkdownView *self) {
     return self != nullptr && (*self).ready;
 }
@@ -1628,6 +2126,14 @@ void TerminalMarkdownView_render(const TerminalMarkdownView *self, TerminalCanva
     size_t width = TerminalCanvas_getWidth(canvas);
     for (size_t row = 0; row < visible && (*self).scroll + row < (*self).rowCount; ++row) {
         const MarkdownRow *record = &(*self).rows[(*self).scroll + row];
+        if ((*record).codeBlock) {
+            // The wash is painted UNDER the text so code glyph cells keep their own
+            // foreground while every cell of the row carries the block background.
+            TerminalPen block = penForRole(&(*self).style, TERMINAL_MARKDOWN_FENCE);
+            block.style = 0;
+            block.fg = TERMINAL_COLOR_DEFAULT;
+            TerminalCanvas_hline(canvas, row, ' ', block);
+        }
         size_t x = 0;
         for (size_t index = 0; index < (*record).segmentCount; ++index) {
             const MarkdownSegment *segment = &(*self).segments[(*record).firstSegment + index];
@@ -1663,10 +2169,12 @@ TerminalProjection TerminalMarkdownView_toStringStruct(const TerminalMarkdownVie
         "TerminalMarkdownView{lines=<borrowed:%zu>,lineCount=%zu,dirty=%d,ready=%d,"
         "truncated=%d,failed=%d,width=%zu,visibleRows=%zu,scroll=%zu,rows=<owned:%zu>,"
         "rowCount=%zu,rowCapacity=%zu,segments=<owned:%zu>,segmentCount=%zu,"
-        "segmentCapacity=%zu,style=<pens>,refusals=%zu}",
+        "segmentCapacity=%zu,codeBlocks=<owned:%zu>,codeBlockCount=%zu,"
+        "codeBlockCapacity=%zu,style=<pens>,refusals=%zu}",
         (*self).lineCount, (*self).lineCount, (*self).dirty, (*self).ready,
         (*self).truncated, (*self).failed, (*self).width, (*self).visibleRows,
         (*self).scroll, (*self).rowCapacity, (*self).rowCount, (*self).rowCapacity,
         (*self).segmentCapacity, (*self).segmentCount, (*self).segmentCapacity,
+        (*self).codeBlockCapacity, (*self).codeBlockCount, (*self).codeBlockCapacity,
         (*self).refusals);
 }

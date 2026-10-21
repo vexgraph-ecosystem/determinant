@@ -13,10 +13,12 @@
 //
 // This is a READ-ONLY document view, not a CommonMark implementation. It owns a
 // GFM-ish subset — headings, paragraphs, emphasis, inline code, links, lists,
-// task items, quotes/callouts, fenced code, thematic breaks and bordered simple
-// tables — and deliberately leaves HTML layout, images, footnotes, math and nested tables to
-// the caller or to a later slice. The subset is stated so nobody mistakes a
-// preview for a conformance claim.
+// task items, quotes/callouts, shaded fenced code, thematic breaks and bordered
+// simple tables with wrapped cells — and deliberately leaves HTML layout, images,
+// footnotes, math and nested tables to the caller or to a later slice. A fenced
+// code block is a full-width translucent background band (no box glyphs) with one
+// blank row above and below it; the same treatment applies inside a callout. The
+// subset is stated so nobody mistakes a preview for a conformance claim.
 //
 // Source lines are BORROWED. The caller keeps them alive for the life of the
 // source and calls setSource(nullptr, 0) before freeing them. Layout is COLD:
@@ -28,6 +30,8 @@
 // of words costs one growable array rather than one allocation per row. A blank
 // row is a row with no segments. The row count includes blank rows, because the
 // caller scrolls the document, not the source.
+// Ordered-list items align to the widest marker in their sibling list. Marker
+// width is measured from source text, not a fixed-width integer or digit limit.
 
 #define TERMINAL_MARKDOWN_ROWS_LIMIT 100000u
 #define TERMINAL_MARKDOWN_ROWS_DEFAULT 64u
@@ -55,10 +59,47 @@ typedef struct TerminalMarkdownStyle {
     TerminalPen quote;
     TerminalPen rule;
     TerminalPen marker;
+    // The fence pen carries BOTH the code text and the block's background band.
+    // Give it a translucent bg and the whole row shades over the host backdrop;
+    // leave bg unset and the block is invisible.
     TerminalPen fence;
 } TerminalMarkdownStyle;
 
 typedef struct TerminalMarkdownView TerminalMarkdownView;
+
+// VALUE RECORD: TerminalMarkdownCodeBlock (no behaviour; returned by value).
+// One laid-out fenced block. `firstRow`/`rowCount` name the shaded document rows,
+// while `firstSourceLine`/`sourceLineCount` name its content lines in the borrowed
+// source (the opening and closing fences are excluded). `quoteDepth` is nonzero
+// when the fence sits inside a blockquote/callout, so the copy projection strips
+// the quote markers from each line.
+typedef struct TerminalMarkdownCodeBlock {
+    bool valid;
+    size_t firstRow;
+    size_t rowCount;
+    size_t firstSourceLine;
+    size_t sourceLineCount;
+    size_t quoteDepth;
+} TerminalMarkdownCodeBlock;
+
+// VALUE RECORD: TerminalMarkdownCodeLine (no behaviour; borrowed view).
+typedef struct TerminalMarkdownCodeLine {
+    bool valid;
+    const char *text;
+    size_t length;
+} TerminalMarkdownCodeLine;
+
+size_t TerminalMarkdownView_codeBlockCount(const TerminalMarkdownView *self);
+// The block whose shaded rows cover `row` (a document row, not a screen row), or
+// an invalid record when that row is not inside a code block. Cold linear/binary
+// lookup; callers may use it per hover frame.
+TerminalMarkdownCodeBlock TerminalMarkdownView_codeBlockAt(const TerminalMarkdownView *self,
+                                                           size_t row);
+// One source line of `block` (0..sourceLineCount-1), borrowed from the view's
+// source and with quote markers removed. An invalid block/index returns invalid.
+TerminalMarkdownCodeLine TerminalMarkdownView_codeBlockLine(const TerminalMarkdownView *self,
+                                                            TerminalMarkdownCodeBlock block,
+                                                            size_t line);
 
 TerminalMarkdownView *TerminalMarkdownView_0(void);
 #define TerminalMarkdownView(...) CONSTRUCTOR_DISPATCH(TerminalMarkdownView, __VA_ARGS__)
