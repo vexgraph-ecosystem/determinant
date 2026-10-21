@@ -103,6 +103,14 @@ of component**: a panel (container) and a text (leaf).
 and it is the only place a handler is retained — every other widget returns an
 event and keeps nothing.
 
+`TerminalCodeView` is a borrowed one-line painter, not a lexer or language
+adapter. A consumer supplies ordered UTF-8 byte spans with terminal pens and
+optional inlay labels anchored at source byte offsets. Determinant validates the
+admission boundaries and paints clipped terminal cells; virtual hints never
+modify source bytes or span coordinates. The consumer owns parsing, semantic
+classification, theme policy and backing lifetimes. This R3 toolkit borrows no
+other R3 language implementation.
+
 ### Pending: frame retirement and the missing flavours
 
 `TerminalFrame` still computes its own five regions, so band arithmetic is
@@ -115,7 +123,8 @@ anchors; never extend the frame's geometry.
 
 `SCROLL` and `CODE` panel flavours are not implemented: scrolling needs a real
 clip and offset, and a code field needs a gutter, so neither is a name to add
-early. The generic `list_view`, `text_view`, `input_line` and `status_bar` widgets
+early. `TerminalCodeView` is only the caller-fed line painter, not that panel
+flavour or an editor. The generic `list_view`, `text_view`, `input_line` and `status_bar` widgets
 are superseded by the tree but not yet rebuilt from it. Cycle safety is proved for
 paint only: an indirect cycle still makes teardown undefined, so the tree is
 acyclic by contract.
