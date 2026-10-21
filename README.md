@@ -80,6 +80,13 @@ with no application content:
   CommonMark: HTML layout, image rendering, reference links, footnotes, math,
   nested tables and grapheme shaping are not implemented. The caller keeps source
   lines alive until it clears or frees the view.
+- `terminal_code_view` — a caller-fed painter for one UTF-8 source line. The host
+  supplies ordered byte spans with terminal pens and optional virtual labels (for
+  example parameter-name inlay hints); the renderer clips in cell coordinates and
+  never edits source bytes. It is not a C23 lexer, semantic analyzer, editor, or
+  theme registry. Language classification and application-specific color policy
+  remain with the consumer; no Semicolon integration or visual acceptance is
+  claimed by this toolkit class alone.
 
 The composition model is therefore: the terminal hosts **one content panel**, and
 that panel is a tree of panels and text. `TerminalAnchor` decides where each child
@@ -156,7 +163,8 @@ Not implemented, and not implied by anything tested here: hover or pointer
 hit-testing across the tree (the cold `TerminalPanel_childAt` primitive exists,
 nothing routes events through it yet), the bracketed chip/segment bar the title
 and status lines need, a hierarchical tree view, a tab strip, and an editor view
-with a line-number gutter. The generic list/text-view/input-line/status-bar
+with a line-number gutter. `TerminalCodeView` paints caller-supplied spans and
+virtual labels only; it does not lex C23 or infer parameter names. The generic list/text-view/input-line/status-bar
 widgets still exist as they were; they are superseded by the tree but not yet
 rebuilt from it, and `terminal_status_bar` in particular is just two texts.
 
