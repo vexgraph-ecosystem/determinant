@@ -27,6 +27,12 @@ with no application content:
 - `terminal_list_view`, `terminal_text_view`, `terminal_input_line`,
   `terminal_status_bar` — generic widgets holding no meaning: channels, users,
   commands and settings are all the same list with different labels.
+- `terminal_tree_view` — a **scrollable, collapsible tree of addressable rows**.
+  A node's subtree is a contiguous pre-order range, so folding is a jump and
+  unfolding is a step; visible rows are cached and recomputed only on a structural
+  change; ids are stable and never recycled. It draws nothing: a row comes back as
+  data (label, depth, folder, expanded, selected) and the caller paints it. That
+  is what lets one widget serve a file tree, a channel list and a settings menu.
 - `terminal_anchor` — the **placement vocabulary**: `FILL`, four reserving
   `BAND`s (top/bottom/left/right) and nine `PIN`s, resolved as a pure function
   that returns the placed region *and* the cursor it leaves. It owns the band
@@ -59,6 +65,11 @@ with no application content:
   sink refused part-way, because a device left inside a half-finished frame is a
   device left frozen. What the bracket *means* stays the host's business — the
   terminal shell maps it onto synchronized output.
+- `terminal_scroll_glide` — the **shared scroll motion** for any viewport: per-axis
+  shown/target positions plus the easing between them. Input moves the target; one
+  frame covers a fraction of what remains and snaps once the rest is imperceptible;
+  `step` returns the whole-cell position to paint. It owns no cells and no clipping,
+  so it is the motion half of a scroll panel, not the `SCROLL` panel flavour.
 - `terminal_input` — the **mouse byte decoder**. A pure state machine turning the
   terminal's two mouse encodings (SGR, and X10 as the legacy fallback) into one
   normalized `TerminalPointerEvent` in **cells**: move, drag, press, release,
@@ -93,8 +104,11 @@ that panel is a tree of panels and text. `TerminalAnchor` decides where each chi
 lands, `TerminalPanel` paints the whole tree every frame, and `TerminalSurface`
 decides what actually reaches the host. Because every rectangle is recomputed from
 the canvas size on every paint, **resize is free** — nothing caches a size, so a
-resize is just the next paint at new dimensions. Nothing here knows a chat, an
-editor or a file tree; those are the application's children.
+resize is just the next paint at new dimensions. `TerminalTreeView` and
+`TerminalScrollGlide` sit beside that tree as reusable widgets/behaviour: the tree
+returns rows as data, the glide returns a position, and the application paints
+both. Nothing here knows a chat, an editor or a file tree; those are the
+application's children.
 
 Nothing here knows about chats, users, badges, personalities or `>w<` art — those
 are application content drawn *through* the toolkit by the app (see the
@@ -160,13 +174,15 @@ presets first, not substituting geometry. Until that lands, new layout work
 belongs on panels and anchors.
 
 Not implemented, and not implied by anything tested here: hover or pointer
-hit-testing across the tree (the cold `TerminalPanel_childAt` primitive exists,
-nothing routes events through it yet), the bracketed chip/segment bar the title
-and status lines need, a hierarchical tree view, a tab strip, and an editor view
-with a line-number gutter. `TerminalCodeView` paints caller-supplied spans and
-virtual labels only; it does not lex C23 or infer parameter names. The generic list/text-view/input-line/status-bar
-widgets still exist as they were; they are superseded by the tree but not yet
-rebuilt from it, and `terminal_status_bar` in particular is just two texts.
+hit-testing across the panel tree (the cold `TerminalPanel_childAt` primitive
+exists, nothing routes events through it yet), the bracketed chip/segment bar the
+title and status lines need, a `SCROLL` panel flavour with a real clip and offset,
+a tab strip, and an editor view with a line-number gutter. `TerminalCodeView`
+paints caller-supplied spans and virtual labels only; it does not lex C23 or infer
+parameter names. `TerminalScrollGlide` supplies the motion half of scrolling, not
+the clipping panel. The generic list/text-view/input-line/status-bar widgets still
+exist as they were; they are superseded by the tree but not yet rebuilt from it,
+and `terminal_status_bar` in particular is just two texts.
 
 ASCII cells are the current format: no Unicode/grapheme shaping, ANSI decoder,
 ncurses backend, physical terminal or cross-platform runtime proof is claimed.

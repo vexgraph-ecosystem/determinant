@@ -96,6 +96,21 @@ panel (container) and text (leaf).
 only widget retaining a handler; every other widget returns an event and keeps
 nothing.
 
+`TerminalTreeView` is a scrollable, collapsible tree of addressable rows. A
+node's subtree is a contiguous pre-order range, so folding is a jump and unfolding
+is a step; visible rows are cached and recomputed only on a structural change;
+ids are stable and never recycled. It draws nothing: a row is returned as data
+(label, depth, folder, expanded, selected) and the caller paints it. That is what
+lets one widget serve a file tree, a channel list and a settings menu. It is not a
+panel child and does not replace the panel tree.
+
+`TerminalScrollGlide` is the shared scroll motion for any viewport: per-axis
+shown/target positions plus the easing between them, with a snap threshold. Input
+moves the target; `step` returns the whole-cell position to paint. It owns no
+cells and no clipping, so it is the motion half of a scroll panel, not the
+`SCROLL` panel flavour. `step` is the frame path: one null guard, no logging and
+no allocation.
+
 `TerminalCodeView` is a borrowed one-line painter, not a lexer/language adapter.
 Consumers supply ordered UTF-8 byte spans with terminal pens and optional inlay
 labels anchored at source byte offsets. Determinant validates admission bounds
@@ -113,16 +128,20 @@ not the footer row. Retirement therefore first requires migrating
 and anchors; never extend frame geometry.
 
 `SCROLL` and `CODE` panel flavours are unimplemented: scrolling needs a real clip
-and offset; code needs a gutter, so do not add either name early. `TerminalCodeView`
-is only the caller-fed line painter, not that flavour or an editor. Generic
-`list_view`, `text_view`, `input_line` and `status_bar` widgets are superseded by
-the tree but not yet rebuilt from it. Cycle safety is proved for paint only;
-indirect cycles still make teardown undefined, so the tree is acyclic by contract.
+and offset; code needs a gutter, so do not add either name early.
+`TerminalScrollGlide` is now the reusable motion model, but it is not that flavour:
+the panel that clips cells still does not exist. `TerminalCodeView` is only the
+caller-fed line painter, not the `CODE` flavour or an editor. Generic `list_view`,
+`text_view`, `input_line` and `status_bar` widgets are superseded by the tree but
+not yet rebuilt from it. Cycle safety is proved for paint only; indirect cycles
+still make teardown undefined, so the tree is acyclic by contract.
 
-Not implemented or implied by an executed owner: tree pointer/hover routing
-(cold `TerminalPanel_childAt` exists, unused); bracketed chip/segment bar;
-hierarchical tree view; tab strip; editor view with line-number gutter; and
-child-array allocation-failure injection.
+Not implemented or implied by an executed owner: panel-tree pointer/hover routing
+(cold `TerminalPanel_childAt` exists, unused); bracketed chip/segment bar; tab
+strip; editor view with line-number gutter; and child-array allocation-failure
+injection. `TerminalTreeView` exists and its own owner proves folding, selection,
+reveal and viewport clamping; it draws no rows itself, so the caller's painting is
+not part of that proof.
 
 ;;INTENTION("R3 terminal toolkit: anchor-owned placement over a two-kind component tree (panel container, addressable text leaf), a total repaint each frame so resize needs no invalidation, and a last-paint presenter that owns the delta; the frame's five regions remain a pending deliberate migration rather than a second layout system.")
 
