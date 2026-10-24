@@ -152,8 +152,9 @@ TerminalProjection TerminalAppearance_toString(const TerminalAppearance *self) {
 TerminalProjection TerminalAppearance_toStringStruct(const TerminalAppearance *self) {
     if (self == nullptr)
         return TerminalProjection_format("nullptr");
+    TerminalRule rule = (*self).rule;
     return TerminalProjection_format(
         "TerminalAppearance{h=U+%04X,v=U+%04X,junction=U+%04X,stripe=U+%04X,every=%zu,accent=0x%08X}",
-        (*self).rule.horizontal, (*self).rule.vertical, (*self).rule.junction,
-        (*self).rule.stripe, (*self).rule.stripeEvery, (*self).colorAccent);
+        rule.horizontal, rule.vertical, rule.junction,
+        rule.stripe, rule.stripeEvery, (*self).colorAccent);
 }

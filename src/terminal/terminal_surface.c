@@ -352,10 +352,12 @@ TerminalProjection TerminalSurface_toString(const TerminalSurface *self) {
 TerminalProjection TerminalSurface_toStringStruct(const TerminalSurface *self) {
     if (self == nullptr)
         return TerminalProjection_format("nullptr");
+    TerminalCanvas back = (*self).back;
+    TerminalCanvas front = (*self).front;
     return TerminalProjection_format(
         "TerminalSurface{back=%zux%zu@%zu,%zu,front=%zux%zu@%zu,%zu,sink=%s,gapTolerance=%zu,presentCount=%zu,changedCells=%zu,changedRuns=%zu,emittedCells=%zu,refusalCount=%zu,active=%d}",
-        (*self).back.width, (*self).back.height, (*self).back.x, (*self).back.y,
-        (*self).front.width, (*self).front.height, (*self).front.x, (*self).front.y,
+        back.width, back.height, back.x, back.y,
+        front.width, front.height, front.x, front.y,
         (*self).sink ? "bound" : "none", (*self).gapTolerance,
         (*self).presentCount, (*self).changedCells, (*self).changedRuns, (*self).emittedCells,
         (*self).refusalCount, (*self).active);

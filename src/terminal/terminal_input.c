@@ -206,10 +206,14 @@ TerminalPointerEvent TerminalInput_getEvent(const TerminalInput *self) {
     return self != nullptr ? (*self).event : (TerminalPointerEvent) {0};
 }
 TerminalPointerKind TerminalInput_getKind(const TerminalInput *self) {
-    return self != nullptr ? (*self).event.kind : TERMINAL_POINTER_NONE;
+    if (self == nullptr) return TERMINAL_POINTER_NONE;
+    TerminalPointerEvent event = (*self).event;
+    return event.kind;
 }
 TerminalPointerButton TerminalInput_getButton(const TerminalInput *self) {
-    return self != nullptr ? (*self).event.button : TERMINAL_BUTTON_NONE;
+    if (self == nullptr) return TERMINAL_BUTTON_NONE;
+    TerminalPointerEvent event = (*self).event;
+    return event.button;
 }
 bool TerminalInput_isReady(const TerminalInput *self) { return self != nullptr && (*self).ready; }
 bool TerminalInput_isPending(const TerminalInput *self) {

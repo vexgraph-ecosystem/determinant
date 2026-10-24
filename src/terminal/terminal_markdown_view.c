@@ -1879,14 +1879,15 @@ TerminalMarkdownView *TerminalMarkdownView_0(void) {
     if (self == nullptr)
         return nullptr;
     *self = (TerminalMarkdownView) {0};
-    (*self).style.body = TerminalPen_0();
-    (*self).style.heading = TerminalPen_1(TERMINAL_STYLE_BOLD);
-    (*self).style.code = TerminalPen_2(0, TERMINAL_RGB(112, 190, 130));
-    (*self).style.link = TerminalPen_1(TERMINAL_STYLE_UNDERLINE);
-    (*self).style.quote = TerminalPen_2(TERMINAL_STYLE_BOLD, TERMINAL_RGB(105, 190, 220));
-    (*self).style.rule = TerminalPen_1(TERMINAL_STYLE_DIM);
-    (*self).style.marker = TerminalPen_2(TERMINAL_STYLE_BOLD, TERMINAL_RGB(235, 190, 95));
-    (*self).style.fence =
+    TerminalMarkdownStyle *style = &(*self).style;
+    (*style).body = TerminalPen_0();
+    (*style).heading = TerminalPen_1(TERMINAL_STYLE_BOLD);
+    (*style).code = TerminalPen_2(0, TERMINAL_RGB(112, 190, 130));
+    (*style).link = TerminalPen_1(TERMINAL_STYLE_UNDERLINE);
+    (*style).quote = TerminalPen_2(TERMINAL_STYLE_BOLD, TERMINAL_RGB(105, 190, 220));
+    (*style).rule = TerminalPen_1(TERMINAL_STYLE_DIM);
+    (*style).marker = TerminalPen_2(TERMINAL_STYLE_BOLD, TERMINAL_RGB(235, 190, 95));
+    (*style).fence =
         TerminalPen_3(TERMINAL_STYLE_DIM, TERMINAL_COLOR_DEFAULT, MARKDOWN_CODE_BLOCK_BG);
     return self;
 }
