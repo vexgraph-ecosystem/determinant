@@ -3,9 +3,12 @@
 ## Constitution Link
 
 The complete [constitution](https://gist.github.com/vex-graph/4132a6c45cb6d3797c3e8eff2e94035a)
-governs this repository. Workspace source: `../../gist/PREFERENCES.md`.
-Read it first, then this document, `../../tests/test-preferences.md`,
-`../../gist/test-checklist.md`, and the actual implementation.
+governs this repository. The binding law list is `gist.md`
+(`../../../metadata/gists/preferences/gist.md`); `../../../PREFERENCES.md` is its full
+rationale and is never ingested whole. Read the law first, then this document, the proof
+lawbook `../../../tests/test-preferences.md` (slice one law with
+`./tools/prefs test "<title>"`), the evidence ledger
+`../../../metadata/gists/test-checklist.md`, and the actual implementation.
 
 ## Law Index (Binding Matrix)
 
@@ -148,6 +151,6 @@ not part of that proof.
 ## Current Proof Boundary
 
 This lawbook states the accepted contract, not readiness. Owner tests belong in
-`../../tests/determinant/`. Primeagen integration, live reload, real terminal/
+`../../../tests/determinant/`. Primeagen integration, live reload, real terminal/
 backend behavior and other platforms need their own executed evidence. No push,
 interactive launch or live provider call is implied.
