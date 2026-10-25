@@ -169,7 +169,9 @@ Not implemented or implied by an executed owner: panel-tree pointer/hover routin
 strip; editor view with line-number gutter; and child-array allocation-failure
 injection. `TerminalTreeView` exists and its own owner proves folding, selection,
 reveal and viewport clamping; it draws no rows itself, so the caller's painting is
-not part of that proof.
+not part of that proof. `cursor/` has no owner yet: caret movement, selection,
+grapheme and wide-cell stepping are still rebuilt inside consumers such as
+Semicolon. The format plane has no italic flag yet.
 
 ;;INTENTION("R3 terminal toolkit: anchor-owned placement over a two-kind component tree (panel container, addressable text leaf), a total repaint each frame so resize needs no invalidation, and a last-paint presenter that owns the delta; the frame's five regions remain a pending deliberate migration rather than a second layout system.")
 
