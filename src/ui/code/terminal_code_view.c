@@ -1,4 +1,4 @@
-#include "terminal/terminal_code_view.h"
+#include "ui/code/terminal_code_view.h"
 #include "terminal/terminal_style.h"
 #include "annotation/definition.h"
 #include "annotation/overview.h"
@@ -21,8 +21,8 @@
 
 ;;OVERVIEW
 /** ============================================================================
- * CLASS: TerminalCodeView (terminal/terminal_code_view.c)
- * STRUCT FIELDS (Mirroring terminal/terminal_code_view.h)
+ * CLASS: TerminalCodeView (ui/code/terminal_code_view.c)
+ * STRUCT FIELDS (Mirroring ui/code/terminal_code_view.h)
  *   const char *text                    borrowed UTF-8 source line
  *   size_t length                       source byte length
  *   const TerminalCodeSpan *spans       borrowed ordered style ranges
