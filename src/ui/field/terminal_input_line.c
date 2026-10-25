@@ -1,4 +1,4 @@
-#include "terminal/terminal_input_line.h"
+#include "ui/field/terminal_input_line.h"
 #include "c23/constructor.h"
 #include "exception/throw.h"
 #include "annotation/definition.h"
@@ -13,8 +13,8 @@
  * buffer on Enter and decides what a submission means. */
 ;;OVERVIEW
 /** ========================================================================
- * CLASS: TerminalInputLine (terminal/terminal_input_line.c)
- * STRUCT FIELDS (Mirroring terminal/terminal_input_line.h)
+ * CLASS: TerminalInputLine (ui/field/terminal_input_line.c)
+ * STRUCT FIELDS (Mirroring ui/field/terminal_input_line.h)
  * char *buffer             borrowed storage
  * size_t capacity          usable bytes (index [length] stays NUL)
  * size_t length            current text length

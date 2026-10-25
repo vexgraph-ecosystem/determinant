@@ -8,7 +8,7 @@
 #include "ui/surface/terminal_projection.h"
 #include "c23/constructor.h"
 
-// terminal/terminal_input_line.h — a bare, generic single-line input.
+// ui/field/terminal_input_line.h — a bare, generic single-line input.
 //
 // Holds a borrowed character buffer and an editing position, draws a prefix
 // (default "> ") and the text. It submits nothing: the caller reads the buffer
