@@ -74,10 +74,10 @@ static FrameGeometry frameGeometry(const TerminalFrame *self, const TerminalCanv
     return g;
 }
 
-static size_t centreX(const FrameGeometry *g) { return g->rails ? g->left + 1 : 0; }
+static size_t centreX(const FrameGeometry *g) { return (*g).rails ? (*g).left + 1 : 0; }
 static size_t centreW(const FrameGeometry *g, const TerminalCanvas *root) {
     size_t W = TerminalCanvas_getWidth(root);
-    return W - g->left - g->right - (g->rails ? 2 : 0);
+    return W - (*g).left - (*g).right - ((*g).rails ? 2 : 0);
 }
 
 TerminalFrame TerminalFrame_0(void) { return TerminalFrame_2(0, 0); }
