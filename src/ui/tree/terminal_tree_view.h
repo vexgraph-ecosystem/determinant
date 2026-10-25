@@ -8,7 +8,7 @@
 #include "ui/surface/terminal_projection.h"
 #include "c23/constructor.h"
 
-// terminal/terminal_tree_view.h — a scrollable, collapsible tree of addressable rows.
+// ui/tree/terminal_tree_view.h — a scrollable, collapsible tree of addressable rows.
 //
 // A list is a tree with one level of depth, and a file browser is a list whose rows can
 // be folded away. Both are the same widget, and this is it: nodes, which ones are

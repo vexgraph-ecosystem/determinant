@@ -1,4 +1,4 @@
-#include "terminal/terminal_tree_view.h"
+#include "ui/tree/terminal_tree_view.h"
 #include "nio/mem.h"
 #include "oop/type.h"
 #include "exception/throw.h"
@@ -35,8 +35,8 @@
 
 ;;OVERVIEW
 /** ========================================================================
- * CLASS: TerminalTreeView (terminal/terminal_tree_view.c)
- * STRUCT FIELDS (Mirroring terminal/terminal_tree_view.h)
+ * CLASS: TerminalTreeView (ui/tree/terminal_tree_view.c)
+ * STRUCT FIELDS (Mirroring ui/tree/terminal_tree_view.h)
  * TerminalTreeNode *nodes    owned pre-order node array
  * size_t nodeCount           live nodes
  * size_t nodeCapacity        admitted node slots
