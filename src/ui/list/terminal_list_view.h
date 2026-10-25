@@ -8,7 +8,7 @@
 #include "ui/surface/terminal_projection.h"
 #include "c23/constructor.h"
 
-// terminal/terminal_list_view.h — a bare, generic list.
+// ui/list/terminal_list_view.h — a bare, generic list.
 //
 // Renders borrowed labels into a region, one per row, with a scroll offset and a
 // single selection marker. It carries no meaning: a list of channels, a list of

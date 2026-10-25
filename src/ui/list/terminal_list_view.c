@@ -1,4 +1,4 @@
-#include "terminal/terminal_list_view.h"
+#include "ui/list/terminal_list_view.h"
 #include "terminal/terminal_style.h"
 #include "c23/constructor.h"
 #include "exception/throw.h"
@@ -14,8 +14,8 @@
  * labels and the two pens. */
 ;;OVERVIEW
 /** ========================================================================
- * CLASS: TerminalListView (terminal/terminal_list_view.c)
- * STRUCT FIELDS (Mirroring terminal/terminal_list_view.h)
+ * CLASS: TerminalListView (ui/list/terminal_list_view.c)
+ * STRUCT FIELDS (Mirroring ui/list/terminal_list_view.h)
  * const char *const *labels  borrowed labels
  * size_t count               label count
  * size_t selection           selected index
