@@ -1,5 +1,5 @@
 #include "ui/text/terminal_status_bar.h"
-#include "terminal/terminal_style.h"
+#include "format/terminal_style.h"
 #include "c23/constructor.h"
 #include "exception/throw.h"
 #include "annotation/definition.h"

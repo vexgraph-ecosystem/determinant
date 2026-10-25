@@ -7,7 +7,7 @@
 
 #include "ui/surface/terminal_canvas.h"
 #include "ui/surface/terminal_projection.h"
-#include "terminal/terminal_color.h"
+#include "format/terminal_color.h"
 #include "c23/constructor.h"
 
 // ui/image/terminal_image.h — turn a picture into cells.

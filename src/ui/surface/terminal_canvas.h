@@ -5,8 +5,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include "terminal/terminal_color.h"
-#include "terminal/terminal_style.h"
+#include "format/terminal_color.h"
+#include "format/terminal_style.h"
 #include "ui/surface/terminal_projection.h"
 #include "c23/constructor.h"
 

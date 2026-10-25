@@ -1,5 +1,5 @@
 #include "ui/list/terminal_list_view.h"
-#include "terminal/terminal_style.h"
+#include "format/terminal_style.h"
 #include "c23/constructor.h"
 #include "exception/throw.h"
 #include "annotation/definition.h"

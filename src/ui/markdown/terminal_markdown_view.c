@@ -1,5 +1,5 @@
 #include "ui/markdown/terminal_markdown_view.h"
-#include "terminal/terminal_style.h"
+#include "format/terminal_style.h"
 #include "nio/mem.h"
 #include "oop/type.h"
 #include "exception/throw.h"

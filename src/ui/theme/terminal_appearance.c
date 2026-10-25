@@ -1,5 +1,5 @@
 #include "ui/theme/terminal_appearance.h"
-#include "terminal/terminal_color.h"
+#include "format/terminal_color.h"
 #include "exception/throw.h"
 #include "annotation/definition.h"
 #include "annotation/overview.h"
