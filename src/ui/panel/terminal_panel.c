@@ -1,4 +1,4 @@
-#include "terminal/terminal_panel.h"
+#include "ui/panel/terminal_panel.h"
 #include "terminal/terminal_text.h"
 #include "nio/mem.h"
 #include "oop/type.h"
@@ -35,8 +35,8 @@
  * region it resolved and the pen it wants inherited, and the child decides. */
 ;;OVERVIEW
 /** ========================================================================
- * CLASS: TerminalPanel (terminal/terminal_panel.c)
- * STRUCT FIELDS (Mirroring terminal/terminal_panel.h)
+ * CLASS: TerminalPanel (ui/panel/terminal_panel.c)
+ * STRUCT FIELDS (Mirroring ui/panel/terminal_panel.h)
  * TerminalPanelLayout layout    FLEX (bands reserve) or LAYERED (stack)
  * TerminalChild *children       owned growable slot array
  * size_t capacity               admitted slots

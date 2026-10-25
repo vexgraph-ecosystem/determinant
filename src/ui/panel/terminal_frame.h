@@ -10,7 +10,7 @@
 #include "ui/image/terminal_image.h"
 #include "c23/constructor.h"
 
-// terminal/terminal_frame.h — a bare region layout, no application semantics.
+// ui/panel/terminal_frame.h — a bare region layout, no application semantics.
 //
 // TerminalFrame divides a rectangle into named REGIONS and hands each back as a
 // TerminalCanvas: an optional header band, a body split into left / centre /

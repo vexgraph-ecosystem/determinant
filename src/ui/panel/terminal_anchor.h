@@ -8,7 +8,7 @@
 #include "ui/surface/terminal_projection.h"
 #include "c23/constructor.h"
 
-// terminal/terminal_anchor.h — the placement vocabulary.
+// ui/panel/terminal_anchor.h — the placement vocabulary.
 //
 // A TerminalAnchor says WHERE a layer (or any region) lands inside its parent.
 // TerminalAnchor_place() is PURE: given the parent's running cursor it returns

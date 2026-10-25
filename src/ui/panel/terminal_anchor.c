@@ -1,4 +1,4 @@
-#include "terminal/terminal_anchor.h"
+#include "ui/panel/terminal_anchor.h"
 #include "exception/throw.h"
 #include "annotation/definition.h"
 #include "annotation/overview.h"
@@ -17,8 +17,8 @@
  * yields an empty region instead of an underflowed rectangle. */
 ;;OVERVIEW
 /** ========================================================================
- * CLASS: TerminalAnchor (terminal/terminal_anchor.c)
- * STRUCT FIELDS (Mirroring terminal/terminal_anchor.h)
+ * CLASS: TerminalAnchor (ui/panel/terminal_anchor.c)
+ * STRUCT FIELDS (Mirroring ui/panel/terminal_anchor.h)
  * TerminalAnchorKind kind        placement family (fill, band, pin)
  * size_t extent                  band thickness in cells (AUTO = whole cursor)
  * size_t width                   pin width in cells (AUTO = cursor width)

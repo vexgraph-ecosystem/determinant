@@ -5,13 +5,13 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include "terminal/terminal_anchor.h"
+#include "ui/panel/terminal_anchor.h"
 #include "ui/surface/terminal_canvas.h"
 #include "ui/image/terminal_image.h"
 #include "ui/surface/terminal_projection.h"
 #include "c23/constructor.h"
 
-// terminal/terminal_panel.h — the CONTAINER.
+// ui/panel/terminal_panel.h — the CONTAINER.
 //
 // One of the two components a terminal interface is made of. A panel is a box
 // that holds children and arranges them; it has no content of its own beyond a

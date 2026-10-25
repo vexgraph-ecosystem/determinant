@@ -9,7 +9,7 @@
 
 #include "ui/surface/terminal_canvas.h"
 #include "ui/surface/terminal_projection.h"
-#include "terminal/terminal_frame.h"
+#include "ui/panel/terminal_frame.h"
 
 // terminal/terminal_appearance.h — the toolkit's NAMED APPEARANCE presets.
 //

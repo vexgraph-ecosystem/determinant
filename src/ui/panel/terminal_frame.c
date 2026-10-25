@@ -1,4 +1,4 @@
-#include "terminal/terminal_frame.h"
+#include "ui/panel/terminal_frame.h"
 #include "terminal/terminal_style.h"
 #include "c23/constructor.h"
 #include "exception/throw.h"
@@ -17,8 +17,8 @@
  * background image. */
 ;;OVERVIEW
 /** ========================================================================
- * CLASS: TerminalFrame (terminal/terminal_frame.c)
- * STRUCT FIELDS (Mirroring terminal/terminal_frame.h)
+ * CLASS: TerminalFrame (ui/panel/terminal_frame.c)
+ * STRUCT FIELDS (Mirroring ui/panel/terminal_frame.h)
  * size_t leftWidth, rightWidth   requested column widths
  * size_t headerRows, footerRows  top/bottom band rows
  * const TerminalImage *background  borrowed background image (nullable)
