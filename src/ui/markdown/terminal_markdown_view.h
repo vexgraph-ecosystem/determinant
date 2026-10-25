@@ -9,7 +9,7 @@
 #include "ui/surface/terminal_projection.h"
 #include "c23/constructor.h"
 
-// terminal/terminal_markdown_view.h — rendered Markdown in terminal cells.
+// ui/markdown/terminal_markdown_view.h — rendered Markdown in terminal cells.
 //
 // This is a READ-ONLY document view, not a CommonMark implementation. It owns a
 // GFM-ish subset — headings, paragraphs, emphasis, inline code, links, lists,

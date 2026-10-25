@@ -1,4 +1,4 @@
-#include "terminal/terminal_markdown_view.h"
+#include "ui/markdown/terminal_markdown_view.h"
 #include "terminal/terminal_style.h"
 #include "nio/mem.h"
 #include "oop/type.h"
@@ -54,8 +54,8 @@
 
 ;;OVERVIEW
 /** ============================================================================
- * CLASS: TerminalMarkdownView (terminal/terminal_markdown_view.c)
- * STRUCT FIELDS (Mirroring terminal/terminal_markdown_view.h)
+ * CLASS: TerminalMarkdownView (ui/markdown/terminal_markdown_view.c)
+ * STRUCT FIELDS (Mirroring ui/markdown/terminal_markdown_view.h)
  *   const char *const *lines   borrowed source lines; caller owns their bytes
  *   size_t lineCount           number of borrowed lines
  *   bool dirty                 source changed since the last layout
