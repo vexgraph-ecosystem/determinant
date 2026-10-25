@@ -1,4 +1,4 @@
-#include "terminal/terminal_scroll_glide.h"
+#include "ui/scroll/terminal_scroll_glide.h"
 #include "exception/throw.h"
 #include "annotation/definition.h"
 #include "annotation/overview.h"
@@ -23,8 +23,8 @@
  * view share the same feel without each one inventing its own easing. */
 ;;OVERVIEW
 /** ========================================================================
- * CLASS: TerminalScrollGlide (terminal/terminal_scroll_glide.c)
- * STRUCT FIELDS (Mirroring terminal/terminal_scroll_glide.h)
+ * CLASS: TerminalScrollGlide (ui/scroll/terminal_scroll_glide.c)
+ * STRUCT FIELDS (Mirroring ui/scroll/terminal_scroll_glide.h)
  * double rowShown       rows currently displayed, fractional
  * double rowTarget      rows headed for
  * double columnShown    columns currently displayed, fractional

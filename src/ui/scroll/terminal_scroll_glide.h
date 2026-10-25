@@ -7,7 +7,7 @@
 #include "ui/surface/terminal_projection.h"
 #include "c23/constructor.h"
 
-// terminal/terminal_scroll_glide.h — per-axis viewport momentum.
+// ui/scroll/terminal_scroll_glide.h — per-axis viewport momentum.
 //
 // A scroll is two positions (row, column): where the view is shown, where it is
 // heading, and the easing between them. Input moves the target; each frame covers
