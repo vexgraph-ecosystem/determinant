@@ -23,6 +23,7 @@
 /** ========================================================================
  * CLASS: TerminalText (ui/text/terminal_text.c)
  * STRUCT FIELDS (Mirroring ui/text/terminal_text.h)
+ *
  * const char *glyphs            borrowed UTF-8, must outlive the text
  * size_t length                 bytes in `glyphs`
  * TerminalPen pen               this text's own style/foreground/background

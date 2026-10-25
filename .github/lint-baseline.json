@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "note": "Ratchet baseline: CI fails only when a file/rule count grows.",
+  "total": 4,
+  "counts": {
+    "src/terminal/terminal_tree_view.c::Semantic Consistency Law (Cast and pointer spelling)": 2,
+    "src/ui/panel/terminal_frame.c::Semantic Consistency Law (Reference form)": 2
+  }
+}

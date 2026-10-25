@@ -121,6 +121,31 @@ and paints clipped cells; virtual hints never change source bytes or span
 coordinates. Consumers own parsing, semantic classification, theme policy and
 backing lifetimes. This R3 toolkit borrows no other R3 language implementation.
 
+### Source Taxonomy Extension
+
+`src/` is organised by the capability a unit owns, not by a flat widget prefix:
+
+- `ui/surface/` — `Terminal`, `TerminalCanvas`, `TerminalProjection`, `TerminalSurface`: the cell surface and last-paint pipeline.
+- `ui/panel/` — `TerminalPanel`, `TerminalAnchor`, `TerminalFrame`: container, placement, region layout.
+- `ui/text/` — `TerminalText`, `TerminalTextView`, `TerminalStatusBar`.
+- `ui/list/`, `ui/tree/` — `TerminalListView`, `TerminalTreeView`.
+- `ui/field/` — `TerminalInputLine` (single-line field); a multiline textarea is not implemented.
+- `ui/code/` — `TerminalCodeView`; a diff panel and diff-file model are not implemented.
+- `ui/markdown/` — `TerminalMarkdownView`.
+- `ui/button/` — `TerminalButton`.
+- `ui/image/` — `TerminalImage`.
+- `ui/scroll/` — `TerminalScrollGlide`.
+- `ui/theme/` — `TerminalAppearance` presets.
+- `events/` — caller-fed input decoding (currently mouse); a normalised key event is not implemented.
+- `format/` — `TerminalStyle` flags and `TerminalColor` packing.
+- `cli/` — command parsing and log projection, outside `ui/`.
+
+Every include names the canonical path (`ui/panel/terminal_panel.h`,
+`events/terminal_input.h`, `format/terminal_color.h`); `src/terminal/` no longer
+exists. A new reusable unit lands in the directory that owns its capability.
+Class names keep the `Terminal` prefix — the directory is placement, not identity.
+Mirrored owner tests live under `tests/determinant/<same relative directory>/`.
+
 ### Pending: frame retirement and the missing flavours
 
 `TerminalFrame` still computes five regions, duplicating `TerminalAnchor` band

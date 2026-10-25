@@ -170,7 +170,7 @@
 // host's own backdrop by the device backend, so one value reads on a dark and on a
 // light theme. This is PRESENTATION, not content — nothing in the syntax depends
 // on it, and a caller can replace the fence pen's background through setStyle.
-#define MARKDOWN_CODE_BLOCK_BG TERMINAL_RGBA(0x8C, 0x91, 0x9C, 0x66)
+#define MARKDOWN_CODE_BLOCK_BG TERMINAL_RGBA(0xA0, 0xA0, 0xA0, 0x44)
 #define MARKDOWN_CODE_BLOCK_PAD 2u
 
 static const char *const MARKDOWN_SPACES =
