@@ -1,4 +1,4 @@
-#include "terminal/terminal_button.h"
+#include "ui/button/terminal_button.h"
 #include "exception/throw.h"
 #include "annotation/definition.h"
 #include "annotation/overview.h"
@@ -12,8 +12,8 @@
  * consumer consent/tool/application policy remains outside this widget. */
 ;;OVERVIEW
 /** ========================================================================
- * CLASS: TerminalButton (terminal/terminal_button.c)
- * STRUCT FIELDS (Mirroring terminal/terminal_button.h)
+ * CLASS: TerminalButton (ui/button/terminal_button.c)
+ * STRUCT FIELDS (Mirroring ui/button/terminal_button.h)
  * const char *label         borrowed printable ASCII label
  * size_t x                 left column
  * size_t y                 row
