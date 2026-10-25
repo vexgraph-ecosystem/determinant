@@ -7,7 +7,7 @@
 
 #include "ui/surface/terminal_canvas.h"
 #include "ui/surface/terminal_projection.h"
-#include "terminal/terminal_image.h"
+#include "ui/image/terminal_image.h"
 #include "c23/constructor.h"
 
 // terminal/terminal_frame.h — a bare region layout, no application semantics.

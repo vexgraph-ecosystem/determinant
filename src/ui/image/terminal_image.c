@@ -1,4 +1,4 @@
-#include "terminal/terminal_image.h"
+#include "ui/image/terminal_image.h"
 #include "terminal/terminal_style.h"
 #include "c23/constructor.h"
 #include "exception/throw.h"
@@ -15,8 +15,8 @@
  * badge or wallpaper is just one such image; the toolkit ships no art. */
 ;;OVERVIEW
 /** ========================================================================
- * CLASS: TerminalImage (terminal/terminal_image.c)
- * STRUCT FIELDS (Mirroring terminal/terminal_image.h)
+ * CLASS: TerminalImage (ui/image/terminal_image.c)
+ * STRUCT FIELDS (Mirroring ui/image/terminal_image.h)
  * const uint8_t *pixels  borrowed RGBA8 row-major source
  * size_t width, height   source pixel extent
  * const char *ramp       glyph ladder low→high (default " .:-=+*#%@")

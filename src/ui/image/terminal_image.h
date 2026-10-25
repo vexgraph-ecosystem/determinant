@@ -10,7 +10,7 @@
 #include "terminal/terminal_color.h"
 #include "c23/constructor.h"
 
-// terminal/terminal_image.h — turn a picture into cells.
+// ui/image/terminal_image.h — turn a picture into cells.
 //
 // A TerminalImage borrows raw RGBA8 pixels and rasterises them into a
 // TerminalCanvas region: each output cell samples a box of source pixels,

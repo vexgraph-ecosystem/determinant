@@ -7,7 +7,7 @@
 
 #include "terminal/terminal_anchor.h"
 #include "ui/surface/terminal_canvas.h"
-#include "terminal/terminal_image.h"
+#include "ui/image/terminal_image.h"
 #include "ui/surface/terminal_projection.h"
 #include "c23/constructor.h"
 
