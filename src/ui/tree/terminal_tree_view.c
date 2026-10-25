@@ -541,8 +541,8 @@ TerminalProjection TerminalTreeView_toStringStruct(const TerminalTreeView *self)
         "TerminalTreeView { nodes=%p nodeCount=%zu nodeCapacity=%zu rows=%p visibleCount=%zu "
         "rowsCapacity=%zu nextId=%u selected=%u scrollRow=%zu viewportRows=%zu "
         "nodeRefusals=%zu rowRefusals=%zu }",
-        (const void *) (*self).nodes, (*self).nodeCount, (*self).nodeCapacity,
-        (const void *) (*self).rows, (*self).visibleCount, (*self).rowsCapacity,
+        (const void*) (*self).nodes, (*self).nodeCount, (*self).nodeCapacity,
+        (const void*) (*self).rows, (*self).visibleCount, (*self).rowsCapacity,
         (unsigned) (*self).nextId, (unsigned) (*self).selected, (*self).scrollRow,
         (*self).viewportRows, (*self).nodeRefusals, (*self).rowRefusals);
 }
