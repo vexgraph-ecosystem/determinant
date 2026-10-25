@@ -1,4 +1,4 @@
-#include "terminal/terminal_input.h"
+#include "events/terminal_input.h"
 #include "exception/throw.h"
 #include "annotation/definition.h"
 #include "annotation/overview.h"
@@ -29,8 +29,8 @@
  * mouse" can each be answered honestly instead of pretending to coexist. */
 ;;OVERVIEW
 /** ========================================================================
- * CLASS: TerminalInput (terminal/terminal_input.c)
- * STRUCT FIELDS (Mirroring terminal/terminal_input.h)
+ * CLASS: TerminalInput (events/terminal_input.c)
+ * STRUCT FIELDS (Mirroring events/terminal_input.h)
  * TerminalInputState state    where the byte stream currently is
  * size_t rawCount            X10 bytes collected so far
  * size_t field               SGR field under construction (0 button, 1 x, 2 y)

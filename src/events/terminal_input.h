@@ -8,7 +8,7 @@
 #include "ui/surface/terminal_projection.h"
 #include "c23/constructor.h"
 
-// terminal/terminal_input.h — the terminal's MOUSE byte decoder.
+// events/terminal_input.h — the terminal's MOUSE byte decoder.
 //
 // A terminal reports the mouse as escape sequences on the SAME byte stream as
 // keys. TerminalInput turns those bytes into one normalized event in CELLS, so
