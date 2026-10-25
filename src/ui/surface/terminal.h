@@ -1,7 +1,7 @@
 #ifndef DETERMINANT_TERMINAL_H
 #define DETERMINANT_TERMINAL_H
 #include "cli/output.h"
-#include "terminal/terminal_projection.h"
+#include "ui/surface/terminal_projection.h"
 #include "c23/constructor.h"
 #include <stdint.h>
 // Wire/ABI identity; changes require a new explicit admission version.

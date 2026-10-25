@@ -1,4 +1,4 @@
-#include "terminal/terminal_canvas.h"
+#include "ui/surface/terminal_canvas.h"
 #include "c23/constructor.h"
 #include "exception/throw.h"
 #include "annotation/definition.h"
@@ -18,8 +18,8 @@
  * silent no-op (composition, not exhaustion). Colour is packed 0xRRGGBBAA. */
 ;;OVERVIEW
 /** ========================================================================
- * CLASS: TerminalCanvas (terminal/terminal_canvas.c)
- * STRUCT FIELDS (Mirroring terminal/terminal_canvas.h)
+ * CLASS: TerminalCanvas (ui/surface/terminal_canvas.c)
+ * STRUCT FIELDS (Mirroring ui/surface/terminal_canvas.h)
  * uint32_t *cells               borrowed row-major glyph CODEPOINTS
  * uint8_t *styles               borrowed parallel style plane (nullable)
  * uint32_t *fg, *bg             borrowed parallel colour planes (nullable)

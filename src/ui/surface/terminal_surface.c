@@ -1,4 +1,4 @@
-#include "terminal/terminal_surface.h"
+#include "ui/surface/terminal_surface.h"
 #include "exception/throw.h"
 #include "annotation/definition.h"
 #include "annotation/overview.h"
@@ -21,8 +21,8 @@
  * and packed colours, and the host maps it to ncurses, ANSI or a console. */
 ;;OVERVIEW
 /** ========================================================================
- * CLASS: TerminalSurface (terminal/terminal_surface.c)
- * STRUCT FIELDS (Mirroring terminal/terminal_surface.h)
+ * CLASS: TerminalSurface (ui/surface/terminal_surface.c)
+ * STRUCT FIELDS (Mirroring ui/surface/terminal_surface.h)
  * TerminalCanvas back            composed-next grid (borrowed planes)
  * TerminalCanvas front           last-presented grid (borrowed planes)
  * TerminalRunFn sink             borrowed host run sink

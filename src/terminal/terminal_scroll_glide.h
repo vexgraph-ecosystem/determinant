@@ -4,7 +4,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 
-#include "terminal/terminal_projection.h"
+#include "ui/surface/terminal_projection.h"
 #include "c23/constructor.h"
 
 // terminal/terminal_scroll_glide.h — per-axis viewport momentum.

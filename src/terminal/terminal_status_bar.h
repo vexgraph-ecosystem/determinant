@@ -4,8 +4,8 @@
 #include <stdbool.h>
 #include <stddef.h>
 
-#include "terminal/terminal_canvas.h"
-#include "terminal/terminal_projection.h"
+#include "ui/surface/terminal_canvas.h"
+#include "ui/surface/terminal_projection.h"
 #include "c23/constructor.h"
 
 // terminal/terminal_status_bar.h — a bare, generic one-row status line.

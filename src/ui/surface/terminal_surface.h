@@ -5,11 +5,11 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include "terminal/terminal_canvas.h"
-#include "terminal/terminal_projection.h"
+#include "ui/surface/terminal_canvas.h"
+#include "ui/surface/terminal_projection.h"
 #include "c23/constructor.h"
 
-// terminal/terminal_surface.h — the LAST-PAINT presenter.
+// ui/surface/terminal_surface.h — the LAST-PAINT presenter.
 //
 // A TerminalSurface owns no memory: the caller lends TWO canvases over the SAME
 // geometry — `back`, which the frame is composed into, and `front`, the record of

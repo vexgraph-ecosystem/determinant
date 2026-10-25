@@ -1,4 +1,4 @@
-#include "terminal/terminal.h"
+#include "ui/surface/terminal.h"
 #include "exception/throw.h"
 #include "annotation/definition.h"
 #include "annotation/overview.h"
@@ -16,8 +16,8 @@
  * include exists here. This foundation does not implement Primeagen /update. */
 ;;OVERVIEW
 /** ========================================================================
- * CLASS: Terminal (terminal/terminal.c)
- * STRUCT FIELDS (Mirroring terminal/terminal.h)
+ * CLASS: Terminal (ui/surface/terminal.c)
+ * STRUCT FIELDS (Mirroring ui/surface/terminal.h)
  * char *cells                    borrowed contiguous cell backing
  * size_t capacity                admitted backing bytes
  * size_t width                   columns (cells)

@@ -4,8 +4,8 @@
 #include <stdbool.h>
 #include <stddef.h>
 
-#include "terminal/terminal_canvas.h"
-#include "terminal/terminal_projection.h"
+#include "ui/surface/terminal_canvas.h"
+#include "ui/surface/terminal_projection.h"
 #include "c23/constructor.h"
 
 // terminal/terminal_input_line.h — a bare, generic single-line input.

@@ -7,10 +7,10 @@
 
 #include "terminal/terminal_color.h"
 #include "terminal/terminal_style.h"
-#include "terminal/terminal_projection.h"
+#include "ui/surface/terminal_projection.h"
 #include "c23/constructor.h"
 
-// terminal/terminal_canvas.h — the compositor primitive.
+// ui/surface/terminal_canvas.h — the compositor primitive.
 //
 // A TerminalCanvas is a RECTANGULAR VIEW over a caller-owned cell GRID: four
 // parallel planes that describe one screen cell each —

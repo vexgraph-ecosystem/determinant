@@ -6,9 +6,9 @@
 #include <stdint.h>
 
 #include "terminal/terminal_anchor.h"
-#include "terminal/terminal_canvas.h"
+#include "ui/surface/terminal_canvas.h"
 #include "terminal/terminal_image.h"
-#include "terminal/terminal_projection.h"
+#include "ui/surface/terminal_projection.h"
 #include "c23/constructor.h"
 
 // terminal/terminal_panel.h — the CONTAINER.

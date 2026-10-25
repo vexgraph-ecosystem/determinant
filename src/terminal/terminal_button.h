@@ -1,7 +1,7 @@
 #ifndef DETERMINANT_TERMINAL_BUTTON_H
 #define DETERMINANT_TERMINAL_BUTTON_H
-#include "terminal/terminal.h"
-#include "terminal/terminal_projection.h"
+#include "ui/surface/terminal.h"
+#include "ui/surface/terminal_projection.h"
 typedef struct TerminalButton {
     const char *label;
     size_t x;
