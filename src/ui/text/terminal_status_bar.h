@@ -8,7 +8,7 @@
 #include "ui/surface/terminal_projection.h"
 #include "c23/constructor.h"
 
-// terminal/terminal_status_bar.h — a bare, generic one-row status line.
+// ui/text/terminal_status_bar.h — a bare, generic one-row status line.
 //
 // Draws a borrowed left string and an optional borrowed right string on one row.
 // The right string is drawn only when it cannot collide with the left, so a

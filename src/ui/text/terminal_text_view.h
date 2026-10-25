@@ -8,7 +8,7 @@
 #include "ui/surface/terminal_projection.h"
 #include "c23/constructor.h"
 
-// terminal/terminal_text_view.h — a bare, generic text viewport.
+// ui/text/terminal_text_view.h — a bare, generic text viewport.
 //
 // Draws borrowed lines top-aligned into a region with a scroll offset. It holds
 // no transcript policy, no wrapping and no speaker labels: those are application

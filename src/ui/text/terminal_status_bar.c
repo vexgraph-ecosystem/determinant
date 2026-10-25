@@ -1,4 +1,4 @@
-#include "terminal/terminal_status_bar.h"
+#include "ui/text/terminal_status_bar.h"
 #include "terminal/terminal_style.h"
 #include "c23/constructor.h"
 #include "exception/throw.h"
@@ -13,8 +13,8 @@
  * No meaning is attached to either string. Owns no memory. */
 ;;OVERVIEW
 /** ========================================================================
- * CLASS: TerminalStatusBar (terminal/terminal_status_bar.c)
- * STRUCT FIELDS (Mirroring terminal/terminal_status_bar.h)
+ * CLASS: TerminalStatusBar (ui/text/terminal_status_bar.c)
+ * STRUCT FIELDS (Mirroring ui/text/terminal_status_bar.h)
  * const char *left, *right  borrowed status strings (right nullable)
  * TerminalPen leftPen, rightPen  pens
  * FUNCTION REGISTRY (exports)

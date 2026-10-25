@@ -1,4 +1,4 @@
-#include "terminal/terminal_text_view.h"
+#include "ui/text/terminal_text_view.h"
 #include "c23/constructor.h"
 #include "exception/throw.h"
 #include "annotation/definition.h"
@@ -12,8 +12,8 @@
  * labels, no transcript policy — those are the application's. Owns no memory. */
 ;;OVERVIEW
 /** ========================================================================
- * CLASS: TerminalTextView (terminal/terminal_text_view.c)
- * STRUCT FIELDS (Mirroring terminal/terminal_text_view.h)
+ * CLASS: TerminalTextView (ui/text/terminal_text_view.c)
+ * STRUCT FIELDS (Mirroring ui/text/terminal_text_view.h)
  * const char *const *lines  borrowed lines (one row each)
  * size_t count              line count
  * size_t scroll             lines scrolled up from the tail

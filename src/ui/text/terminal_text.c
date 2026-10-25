@@ -1,4 +1,4 @@
-#include "terminal/terminal_text.h"
+#include "ui/text/terminal_text.h"
 #include "nio/mem.h"
 #include "oop/type.h"
 #include "exception/throw.h"
@@ -21,8 +21,8 @@
  * Nothing here allocates per paint or per cell, and a text never holds children. */
 ;;OVERVIEW
 /** ========================================================================
- * CLASS: TerminalText (terminal/terminal_text.c)
- * STRUCT FIELDS (Mirroring terminal/terminal_text.h)
+ * CLASS: TerminalText (ui/text/terminal_text.c)
+ * STRUCT FIELDS (Mirroring ui/text/terminal_text.h)
  * const char *glyphs            borrowed UTF-8, must outlive the text
  * size_t length                 bytes in `glyphs`
  * TerminalPen pen               this text's own style/foreground/background

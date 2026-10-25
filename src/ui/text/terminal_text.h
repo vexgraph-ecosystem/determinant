@@ -9,7 +9,7 @@
 #include "ui/surface/terminal_projection.h"
 #include "c23/constructor.h"
 
-// terminal/terminal_text.h — the addressable LEAF.
+// ui/text/terminal_text.h — the addressable LEAF.
 //
 // One of the two components a terminal interface is made of. Text is a leaf: a
 // borrowed string drawn on one row of the region its parent resolved for it, with
