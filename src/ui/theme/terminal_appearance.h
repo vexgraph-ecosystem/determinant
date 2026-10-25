@@ -11,7 +11,7 @@
 #include "ui/surface/terminal_projection.h"
 #include "ui/panel/terminal_frame.h"
 
-// terminal/terminal_appearance.h — the toolkit's NAMED APPEARANCE presets.
+// ui/theme/terminal_appearance.h — the toolkit's NAMED APPEARANCE presets.
 //
 // A look is a named, self-contained record: the connector glyph set (ASCII or
 // real box drawing) plus the colour palette. Applications list the presets, let

@@ -1,4 +1,4 @@
-#include "terminal/terminal_appearance.h"
+#include "ui/theme/terminal_appearance.h"
 #include "terminal/terminal_color.h"
 #include "exception/throw.h"
 #include "annotation/definition.h"
@@ -14,8 +14,8 @@
  * ('─', '—', '═') now that cells are codepoints, not bytes. */
 ;;OVERVIEW
 /** ========================================================================
- * CLASS: TerminalAppearance (terminal/terminal_appearance.c)
- * STRUCT FIELDS (Mirroring terminal/terminal_appearance.h)
+ * CLASS: TerminalAppearance (ui/theme/terminal_appearance.c)
+ * STRUCT FIELDS (Mirroring ui/theme/terminal_appearance.h)
  * TerminalRule rule            connector glyph set
  * uint32_t colorAccent, colorMuted, colorText, colorError   palette
  * FILE-LOCAL CONSTANTS
