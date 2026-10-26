@@ -15,7 +15,7 @@
 // A TerminalCanvas is a RECTANGULAR VIEW over a caller-owned cell GRID: four
 // parallel planes that describe one screen cell each —
 //   cells   (uint32_t)  the GLYPH as a Unicode codepoint (not a byte!)
-//   styles  (uint8_t)   host-neutral attribute flags (DIM/BOLD/REVERSE/…)
+//   styles  (uint16_t)  host-neutral attribute flags (DIM/BOLD/ITALIC/…)
 //   fg      (uint32_t)  packed 0xRRGGBBAA foreground (TERMINAL_COLOR_DEFAULT = unset)
 //   bg      (uint32_t)  packed 0xRRGGBBAA background (TERMINAL_COLOR_DEFAULT = unset)
 // Every plane is optional except cells; a null plane draws nothing for that
@@ -35,21 +35,21 @@
 // A brush: attribute flags plus foreground/background colours. Build one with
 // TerminalPen_make(...) or start from TerminalPen_0() and set fields.
 typedef struct TerminalPen {
-    uint8_t style;   // TERMINAL_STYLE_* flags
+    uint16_t style;  // TERMINAL_STYLE_* flags (16-bit plane)
     uint32_t fg;     // packed 0xRRGGBBAA or TERMINAL_COLOR_DEFAULT
     uint32_t bg;     // packed 0xRRGGBBAA or TERMINAL_COLOR_DEFAULT
 } TerminalPen;
 
 TerminalPen TerminalPen_0(void);                                  // no flags, default colours
-TerminalPen TerminalPen_1(uint8_t style);
-TerminalPen TerminalPen_2(uint8_t style, uint32_t fg);
-TerminalPen TerminalPen_3(uint8_t style, uint32_t fg, uint32_t bg);
+TerminalPen TerminalPen_1(uint16_t style);
+TerminalPen TerminalPen_2(uint16_t style, uint32_t fg);
+TerminalPen TerminalPen_3(uint16_t style, uint32_t fg, uint32_t bg);
 #define TerminalPen(...) CONSTRUCTOR_DISPATCH(TerminalPen, __VA_ARGS__)
 #define TerminalPen_zero() TerminalPen_0()
 
 typedef struct TerminalCanvas {
     uint32_t *cells;      // borrowed row-major glyph CODEPOINTS (gridWidth * gridHeight)
-    uint8_t *styles;      // borrowed parallel style plane (nullable)
+    uint16_t *styles;     // borrowed parallel style plane (nullable)
     uint32_t *fg;         // borrowed parallel foreground plane (nullable)
     uint32_t *bg;         // borrowed parallel background plane (nullable)
     size_t gridWidth;     // full grid columns (indexing stride)
@@ -62,8 +62,8 @@ typedef struct TerminalCanvas {
 
 // Bind a whole grid as a canvas covering it.
 TerminalCanvas TerminalCanvas_0(void);
-TerminalCanvas TerminalCanvas_4(uint32_t *cells, uint8_t *styles, size_t width, size_t height);
-TerminalCanvas TerminalCanvas_6(uint32_t *cells, uint8_t *styles, uint32_t *fg, uint32_t *bg,
+TerminalCanvas TerminalCanvas_4(uint32_t *cells, uint16_t *styles, size_t width, size_t height);
+TerminalCanvas TerminalCanvas_6(uint32_t *cells, uint16_t *styles, uint32_t *fg, uint32_t *bg,
                                 size_t width, size_t height);
 #define TerminalCanvas(...) CONSTRUCTOR_DISPATCH(TerminalCanvas, __VA_ARGS__)
 #define TerminalCanvas_zero() TerminalCanvas_0()
@@ -105,7 +105,7 @@ size_t TerminalCanvas_widthOf(uint32_t codepoint);
 
 // --- Inspection (tests / agents) ---
 uint32_t TerminalCanvas_glyphAt(const TerminalCanvas *self, size_t lx, size_t ly);
-uint8_t  TerminalCanvas_styleAt(const TerminalCanvas *self, size_t lx, size_t ly);
+uint16_t TerminalCanvas_styleAt(const TerminalCanvas *self, size_t lx, size_t ly);
 uint32_t TerminalCanvas_fgAt(const TerminalCanvas *self, size_t lx, size_t ly);
 uint32_t TerminalCanvas_bgAt(const TerminalCanvas *self, size_t lx, size_t ly);
 size_t   TerminalCanvas_getWidth(const TerminalCanvas *self);

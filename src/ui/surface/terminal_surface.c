@@ -40,7 +40,7 @@
  * SLOT RECORD: TerminalRun
  * size_t x, y, length            absolute origin and cell count of one run
  * const uint32_t *cells          borrowed glyph codepoints at the first cell
- * const uint8_t *styles          borrowed style flags at the first cell (nullable)
+ * const uint16_t *styles         borrowed style flags at the first cell (nullable)
  * const uint32_t *fg, *bg        borrowed packed colours at the first cell (nullable)
  * SLOT RECORD: TerminalPresentResult
  * bool ok                        every changed run was accepted
@@ -153,7 +153,7 @@ static void adoptFront(TerminalSurface *self) {
         size_t origin = (*back).x + (y + (*back).y) * (*back).gridWidth;
         memcpy(&(*front).cells[origin], &(*back).cells[origin], width * sizeof(uint32_t));
         if ((*back).styles != nullptr)
-            memcpy(&(*front).styles[origin], &(*back).styles[origin], width * sizeof(uint8_t));
+            memcpy(&(*front).styles[origin], &(*back).styles[origin], width * sizeof(uint16_t));
         if ((*back).fg != nullptr) {
             memcpy(&(*front).fg[origin], &(*back).fg[origin], width * sizeof(uint32_t));
             memcpy(&(*front).bg[origin], &(*back).bg[origin], width * sizeof(uint32_t));

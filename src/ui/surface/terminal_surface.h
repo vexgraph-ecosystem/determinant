@@ -42,7 +42,7 @@ typedef struct TerminalRun {
     size_t y;               // absolute row
     size_t length;          // cells in this run (>= 1)
     const uint32_t *cells;  // borrowed glyph codepoints at the first cell
-    const uint8_t *styles;  // borrowed style flags at the first cell (nullable)
+    const uint16_t *styles; // borrowed style flags at the first cell (nullable)
     const uint32_t *fg;     // borrowed foreground at the first cell (nullable)
     const uint32_t *bg;     // borrowed background at the first cell (nullable)
 } TerminalRun;

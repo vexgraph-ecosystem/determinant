@@ -21,7 +21,7 @@
  * CLASS: TerminalCanvas (ui/surface/terminal_canvas.c)
  * STRUCT FIELDS (Mirroring ui/surface/terminal_canvas.h)
  * uint32_t *cells               borrowed row-major glyph CODEPOINTS
- * uint8_t *styles               borrowed parallel style plane (nullable)
+ * uint16_t *styles              borrowed parallel style plane (nullable)
  * uint32_t *fg, *bg             borrowed parallel colour planes (nullable)
  * size_t gridWidth, gridHeight  full grid extent (indexing stride)
  * size_t x, y, width, height    this region, absolute, clipped to the grid
@@ -52,13 +52,13 @@
 TerminalPen TerminalPen_0(void) {
     return (TerminalPen) { TERMINAL_STYLE_NONE, TERMINAL_COLOR_DEFAULT, TERMINAL_COLOR_DEFAULT };
 }
-TerminalPen TerminalPen_1(uint8_t style) {
+TerminalPen TerminalPen_1(uint16_t style) {
     return (TerminalPen) { style, TERMINAL_COLOR_DEFAULT, TERMINAL_COLOR_DEFAULT };
 }
-TerminalPen TerminalPen_2(uint8_t style, uint32_t fg) {
+TerminalPen TerminalPen_2(uint16_t style, uint32_t fg) {
     return (TerminalPen) { style, fg, TERMINAL_COLOR_DEFAULT };
 }
-TerminalPen TerminalPen_3(uint8_t style, uint32_t fg, uint32_t bg) {
+TerminalPen TerminalPen_3(uint16_t style, uint32_t fg, uint32_t bg) {
     return (TerminalPen) { style, fg, bg };
 }
 
@@ -66,7 +66,7 @@ TerminalCanvas TerminalCanvas_0(void) {
     return (TerminalCanvas) {0};
 }
 
-static TerminalCanvas canvasMake(uint32_t *cells, uint8_t *styles, uint32_t *fg, uint32_t *bg,
+static TerminalCanvas canvasMake(uint32_t *cells, uint16_t *styles, uint32_t *fg, uint32_t *bg,
                                  size_t width, size_t height) {
     TerminalCanvas c = {0};
     if (cells == nullptr || width == 0 || height == 0)
@@ -84,11 +84,11 @@ static TerminalCanvas canvasMake(uint32_t *cells, uint8_t *styles, uint32_t *fg,
     return c;
 }
 
-TerminalCanvas TerminalCanvas_4(uint32_t *cells, uint8_t *styles, size_t width, size_t height) {
+TerminalCanvas TerminalCanvas_4(uint32_t *cells, uint16_t *styles, size_t width, size_t height) {
     return canvasMake(cells, styles, nullptr, nullptr, width, height);
 }
 
-TerminalCanvas TerminalCanvas_6(uint32_t *cells, uint8_t *styles, uint32_t *fg, uint32_t *bg,
+TerminalCanvas TerminalCanvas_6(uint32_t *cells, uint16_t *styles, uint32_t *fg, uint32_t *bg,
                                 size_t width, size_t height) {
     return canvasMake(cells, styles, fg, bg, width, height);
 }
@@ -283,7 +283,7 @@ uint32_t TerminalCanvas_glyphAt(const TerminalCanvas *self, size_t lx, size_t ly
     return (*self).cells[((*self).y + ly) * (*self).gridWidth + ((*self).x + lx)];
 }
 
-uint8_t TerminalCanvas_styleAt(const TerminalCanvas *self, size_t lx, size_t ly) {
+uint16_t TerminalCanvas_styleAt(const TerminalCanvas *self, size_t lx, size_t ly) {
     if (!TerminalCanvas_isValid(self) || (*self).styles == nullptr
         || lx >= (*self).width || ly >= (*self).height)
         return TERMINAL_STYLE_NONE;
