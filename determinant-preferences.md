@@ -131,7 +131,7 @@ backing lifetimes. This R3 toolkit borrows no other R3 language implementation.
 - `ui/list/`, `ui/tree/` — `TerminalListView`, `TerminalTreeView`.
 - `ui/field/` — `TerminalInputLine` (single-line field); a multiline textarea is not implemented.
 - `ui/code/` — `TerminalCodeView`; a diff panel and diff-file model are not implemented.
-- `ui/markdown/` — `TerminalMarkdownView`.
+- `ui/markdown/` — `TerminalMarkdownView` plus its cold owners: `TerminalMarkdownTheme` (roles, per-level pen ladder, glyphs), `TerminalMarkdownInline` (bold/italic/underline/code span parse), `TerminalMarkdownText` (document line model), `TerminalMarkdownTable` (alignment, escapes, column fit), `TerminalMarkdownCallout` (both spellings, severity and indent), `TerminalMarkdownCodeBlock` (fence pool and copy projection) and `TerminalMarkdownAction` (click value and icon geometry). The view owns layout and paint; the owners own parsing and records; the caller owns the clipboard and performs the action the view reports.
 - `ui/button/` — `TerminalButton`.
 - `ui/image/` — `TerminalImage`.
 - `ui/scroll/` — `TerminalScrollGlide`.
@@ -171,7 +171,15 @@ injection. `TerminalTreeView` exists and its own owner proves folding, selection
 reveal and viewport clamping; it draws no rows itself, so the caller's painting is
 not part of that proof. `cursor/` has no owner yet: caret movement, selection,
 grapheme and wide-cell stepping are still rebuilt inside consumers such as
-Semicolon. The format plane has no italic flag yet.
+Semicolon. The format plane is 16-bit and carries italic as
+`TERMINAL_STYLE_ITALIC`, so a span can be bold, italic and underlined without a
+class of its own.
+
+Markdown presentation is still a bounded subset, not a browser: headings ladders,
+both callout spellings, aligned tables, fenced code with a copy affordance and
+labelled links are owned; emphasis nesting, HTML, reference links, images and a
+full CommonMark parser are not. A link press reports its target; it never hands
+an untrusted URI to a desktop opener.
 
 ;;INTENTION("R3 terminal toolkit: anchor-owned placement over a two-kind component tree (panel container, addressable text leaf), a total repaint each frame so resize needs no invalidation, and a last-paint presenter that owns the delta; the frame's five regions remain a pending deliberate migration rather than a second layout system.")
 

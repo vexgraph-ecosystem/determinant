@@ -1,4 +1,7 @@
 #include "ui/markdown/terminal_markdown_view.h"
+#include "ui/markdown/markdown_text.h"
+#include "ui/markdown/markdown_inline.h"
+#include "ui/markdown/markdown_table.h"
 #include "format/terminal_style.h"
 #include "nio/mem.h"
 #include "oop/type.h"
@@ -188,14 +191,16 @@ static const char *const MARKDOWN_BORDER_RIGHT_MIDDLE = "┤";
 static const char *const MARKDOWN_BORDER_RIGHT_BOTTOM = "┘";
 static const char *const MARKDOWN_BORDER_HORIZONTAL = "─";
 static const char *const MARKDOWN_BORDER_VERTICAL = "│";
-static const char *const MARKDOWN_IMAGE_GLYPH = "▧ ";
 
 typedef struct MarkdownSegment {
     const char *text;
     size_t length;
     size_t repeat;
     TerminalMarkdownRole role;
-    uint8_t style;
+    uint16_t style;
+    uint8_t variant;        // heading level (1..6) or callout kind; else 0
+    const char *link;       // borrowed target, or nullptr for plain text
+    size_t linkLength;
 } MarkdownSegment;
 
 typedef struct MarkdownRow {
@@ -204,22 +209,13 @@ typedef struct MarkdownRow {
     bool codeBlock;   // this row is part of a shaded fenced code block
 } MarkdownRow;
 
-// PRIVATE HELPER: MarkdownCodeBlockRecord (no behaviour).
-// Laid-out fence bookkeeping. `valid` is implicit (only appended records exist).
-typedef struct MarkdownCodeBlockRecord {
-    size_t firstRow;
-    size_t rowCount;
-    size_t firstSourceLine;
-    size_t sourceLineCount;
-    size_t quoteDepth;
-} MarkdownCodeBlockRecord;
-
 typedef struct MarkdownPrefixItem {
     const char *text;
     size_t length;
     size_t cells;
     TerminalMarkdownRole role;
-    uint8_t style;
+    uint16_t style;
+    uint8_t variant;        // heading level or callout kind; else 0
 } MarkdownPrefixItem;
 
 typedef struct MarkdownPrefix {
@@ -253,12 +249,7 @@ typedef struct MarkdownListMarker {
     size_t markerLength;
 } MarkdownListMarker;
 
-typedef struct MarkdownCellLine {
-    const char *text;
-    size_t length;
-    size_t next;
-    size_t cells;
-} MarkdownCellLine;
+typedef TerminalMarkdownTableCellLine MarkdownCellLine;
 
 struct TerminalMarkdownView {
     const char *const *lines;
@@ -276,51 +267,28 @@ struct TerminalMarkdownView {
     MarkdownSegment *segments;
     size_t segmentCount;
     size_t segmentCapacity;
-    MarkdownCodeBlockRecord *codeBlocks;
-    size_t codeBlockCount;
-    size_t codeBlockCapacity;
+    TerminalMarkdownCodeBlockPool *codeBlocks;
+    TerminalMarkdownTheme theme;
     TerminalMarkdownStyle style;
+    size_t hoverRow;
+    size_t hoverColumn;
+    size_t copiedBlock;
     size_t refusals;
 };
 
 static size_t cellsOf(const char *text, size_t length) {
-    size_t cells = 0;
-    size_t at = 0;
-    while (at < length) {
-        TerminalCanvasDecodedScalar decoded = TerminalCanvas_utf8Decode(text + at, length - at);
-        if (decoded.bytes == 0) {
-            ++cells;
-            ++at;
-            continue;
-        }
-        cells += TerminalCanvas_widthOf(decoded.codepoint);
-        at += decoded.bytes;
-    }
-    return cells;
+    return TerminalMarkdownText_cells(text, length);
 }
 
 // Bytes that fit in `cells` CELLS, never splitting a UTF-8 scalar. A combining
 // mark has zero width and rides with the scalar before it, so a row cannot start
 // with a floating accent.
 static size_t bytesForCells(const char *text, size_t length, size_t cells, size_t *usedCells) {
-    size_t at = 0;
-    size_t consumed = 0;
-    while (at < length) {
-        TerminalCanvasDecodedScalar decoded = TerminalCanvas_utf8Decode(text + at, length - at);
-        size_t width = decoded.bytes == 0 ? 1u : TerminalCanvas_widthOf(decoded.codepoint);
-        if (width != 0 && consumed + width > cells)
-            break;
-        consumed += width;
-        at += decoded.bytes == 0 ? 1u : decoded.bytes;
-    }
-    if (usedCells != nullptr)
-        *usedCells = consumed;
-    return at;
+    return TerminalMarkdownText_bytesForCells(text, length, cells, usedCells);
 }
 
 static size_t scalarBytes(const char *text, size_t length) {
-    TerminalCanvasDecodedScalar decoded = TerminalCanvas_utf8Decode(text, length);
-    return decoded.bytes == 0 ? 1u : decoded.bytes;
+    return TerminalMarkdownText_scalarBytes(text, length);
 }
 
 static void refuse(TerminalMarkdownView *self, const char *reason) {
@@ -372,42 +340,6 @@ static bool growSegments(TerminalMarkdownView *self) {
     return true;
 }
 
-static bool growCodeBlocks(TerminalMarkdownView *self) {
-    size_t next = (*self).codeBlockCapacity == 0 ? TERMINAL_MARKDOWN_SEGMENTS_DEFAULT
-                                                 : (*self).codeBlockCapacity * 2u;
-    if (next < (*self).codeBlockCapacity
-        || next > SIZE_MAX / sizeof(MarkdownCodeBlockRecord)) {
-        refuse(self, "code block capacity overflow");
-        return false;
-    }
-    MarkdownCodeBlockRecord *grown =
-        Memory_alloc(TYPE_BYTE_ARRAY, next * sizeof(MarkdownCodeBlockRecord));
-    if (grown == nullptr) {
-        refuse(self, "code block pool allocation refused");
-        return false;
-    }
-    if ((*self).codeBlockCapacity != 0)
-        memcpy(grown, (*self).codeBlocks,
-               (*self).codeBlockCapacity * sizeof(MarkdownCodeBlockRecord));
-    Memory_free((*self).codeBlocks);
-    (*self).codeBlocks = grown;
-    (*self).codeBlockCapacity = next;
-    return true;
-}
-
-static bool appendCodeBlock(TerminalMarkdownView *self, size_t firstRow, size_t rowCount,
-                            size_t firstSourceLine, size_t sourceLineCount, size_t quoteDepth) {
-    if (rowCount == 0)
-        return true;
-    if ((*self).codeBlockCount == (*self).codeBlockCapacity && !growCodeBlocks(self))
-        return false;
-    (*self).codeBlocks[(*self).codeBlockCount] =
-        (MarkdownCodeBlockRecord) { firstRow, rowCount, firstSourceLine, sourceLineCount,
-                                    quoteDepth };
-    ++(*self).codeBlockCount;
-    return true;
-}
-
 // Mark every row in [first, last) as a shaded code row. Wrapping can append rows
 // inside a single logical line, so the range is marked once the fence is complete
 // instead of trying to tag each row at creation.
@@ -433,7 +365,7 @@ static bool appendRow(TerminalMarkdownView *self) {
 }
 
 static bool appendSegment(TerminalMarkdownView *self, const char *text, size_t length,
-                          size_t repeat, TerminalMarkdownRole role, uint8_t style) {
+                          size_t repeat, TerminalMarkdownRole role, uint16_t style) {
     if (self == nullptr || (*self).rowCount == 0 || text == nullptr)
         return false;
     if ((*self).segmentCount == (*self).segmentCapacity && !growSegments(self))
@@ -447,13 +379,33 @@ static bool appendSegment(TerminalMarkdownView *self, const char *text, size_t l
     (*segment).repeat = repeat == 0 ? 1u : repeat;
     (*segment).role = role;
     (*segment).style = style;
+    (*segment).variant = 0;
+    (*segment).link = nullptr;
+    (*segment).linkLength = 0;
     ++(*self).segmentCount;
     ++(*row).segmentCount;
     return true;
 }
 
-static void prefixAdd(MarkdownPrefix *prefix, const char *text, size_t length,
-                      TerminalMarkdownRole role, uint8_t style) {
+// Stamp every segment appended since `first` with the structure the row belongs
+// to: the heading level or callout kind, and the borrowed link target (if any).
+// Wrap can split one span across rows, so the range — not the last segment — is
+// what carries the identity.
+static bool stampRange(TerminalMarkdownView *self, size_t first, uint8_t variant,
+                       const char *link, size_t linkLength) {
+    if (self == nullptr || (variant == 0 && link == nullptr))
+        return true;
+    for (size_t index = first; index < (*self).segmentCount; ++index) {
+        MarkdownSegment *segment = &(*self).segments[index];
+        (*segment).variant = variant;
+        (*segment).link = link;
+        (*segment).linkLength = linkLength;
+    }
+    return true;
+}
+
+static void prefixAddVariant(MarkdownPrefix *prefix, const char *text, size_t length,
+                             TerminalMarkdownRole role, uint16_t style, uint8_t variant) {
     if (prefix == nullptr || (*prefix).count >= MARKDOWN_PREFIX_ITEMS || text == nullptr)
         return;
     MarkdownPrefixItem *item = &(*prefix).items[(*prefix).count];
@@ -462,12 +414,18 @@ static void prefixAdd(MarkdownPrefix *prefix, const char *text, size_t length,
     (*item).cells = cellsOf(text, length);
     (*item).role = role;
     (*item).style = style;
+    (*item).variant = variant;
     (*prefix).cells += (*item).cells;
     ++(*prefix).count;
 }
 
+static void prefixAdd(MarkdownPrefix *prefix, const char *text, size_t length,
+                      TerminalMarkdownRole role, uint16_t style) {
+    prefixAddVariant(prefix, text, length, role, style, 0);
+}
+
 static void prefixSpaces(MarkdownPrefix *prefix, size_t cells,
-                         TerminalMarkdownRole role, uint8_t style) {
+                         TerminalMarkdownRole role, uint16_t style) {
     while (cells > 0) {
         size_t take = cells > MARKDOWN_SPACES_CAP ? MARKDOWN_SPACES_CAP : cells;
         prefixAdd(prefix, MARKDOWN_SPACES, take, role, style);
@@ -509,8 +467,10 @@ static bool wrapStart(TerminalMarkdownView *self, MarkdownWrap *wrap, bool first
             ? (*prefix).count : (*prefix).markerStart;
         for (size_t index = 0; index < limit; ++index) {
             const MarkdownPrefixItem *item = &(*prefix).items[index];
+            size_t first = (*self).segmentCount;
             if (!appendSegment(self, (*item).text, (*item).length, 1u, (*item).role, (*item).style))
                 return false;
+            stampRange(self, first, (*item).variant, nullptr, 0);
             (*wrap).x += (*item).cells;
         }
         if (!first && !(*prefix).repeatOnWrap && (*prefix).hang != 0) {
@@ -531,7 +491,7 @@ static void wrapSpace(MarkdownWrap *wrap) {
 }
 
 static bool wrapWord(TerminalMarkdownView *self, MarkdownWrap *wrap, const char *text,
-                     size_t length, TerminalMarkdownRole role, uint8_t style) {
+                     size_t length, TerminalMarkdownRole role, uint16_t style) {
     if (wrap == nullptr || text == nullptr || length == 0)
         return true;
     if (!(*wrap).open && !wrapStart(self, wrap, !(*wrap).started))
@@ -544,7 +504,9 @@ static bool wrapWord(TerminalMarkdownView *self, MarkdownWrap *wrap, const char 
         gap = 0;
     }
     if (gap != 0) {
-        if (!appendSegment(self, " ", 1u, 1u, TERMINAL_MARKDOWN_BODY, 0))
+        // The gap belongs to the span that follows it, so a link label is one
+        // hover target and a heading's inter-word space keeps the heading pen.
+        if (!appendSegment(self, " ", 1u, 1u, role, 0))
             return false;
         ++(*wrap).x;
     }
@@ -591,34 +553,7 @@ static bool wrapBreak(TerminalMarkdownView *self, MarkdownWrap *wrap) {
 
 static size_t findBytes(const char *text, size_t length, size_t from,
                         const char *needle, size_t needleLength) {
-    if (needleLength == 0 || from >= length || needleLength > length - from)
-        return MARKDOWN_NO_INDEX;
-    for (size_t at = from; at + needleLength <= length; ++at)
-        if (memcmp(text + at, needle, needleLength) == 0)
-            return at;
-    return MARKDOWN_NO_INDEX;
-}
-
-static size_t findBacktickRun(const char *text, size_t length, size_t from, size_t run) {
-    size_t at = from;
-    while (at < length) {
-        if (text[at] != '`') {
-            ++at;
-            continue;
-        }
-        size_t count = 0;
-        while (at + count < length && text[at + count] == '`')
-            ++count;
-        if (count == run)
-            return at;
-        at += count;
-    }
-    return MARKDOWN_NO_INDEX;
-}
-
-static bool isPunctuation(char character) {
-    return (character >= '!' && character <= '/') || (character >= ':' && character <= '@')
-        || (character >= '[' && character <= '`') || (character >= '{' && character <= '~');
+    return TerminalMarkdownText_find(text, length, from, needle, needleLength);
 }
 
 static bool isSpace(char character) {
@@ -626,7 +561,7 @@ static bool isSpace(char character) {
 }
 
 static bool appendPlain(TerminalMarkdownView *self, MarkdownWrap *wrap, const char *text,
-                        size_t length, TerminalMarkdownRole role, uint8_t style) {
+                        size_t length, TerminalMarkdownRole role, uint16_t style) {
     size_t at = 0;
     while (at < length) {
         if (isSpace(text[at])) {
@@ -643,169 +578,55 @@ static bool appendPlain(TerminalMarkdownView *self, MarkdownWrap *wrap, const ch
     return true;
 }
 
-static bool emitInline(TerminalMarkdownView *self, MarkdownWrap *wrap, const char *text,
-                       size_t length, TerminalMarkdownRole base, uint8_t style, size_t depth);
-
-static bool emitLink(TerminalMarkdownView *self, MarkdownWrap *wrap, const char *text,
-                     size_t length, size_t open, size_t close, uint8_t style, size_t depth) {
-    const char *label = text + open + 1u;
-    size_t labelLength = close - open - 1u;
-    size_t paren = findBytes(text, length, close, "](", 2u);
-    if (paren == MARKDOWN_NO_INDEX)
-        return appendPlain(self, wrap, text + open, 1u, TERMINAL_MARKDOWN_LINK, style);
-    size_t targetStart = paren + 2u;
-    size_t targetEnd = findBytes(text, length, targetStart, ")", 1u);
-    if (targetEnd == MARKDOWN_NO_INDEX)
-        return appendPlain(self, wrap, text + open, 1u, TERMINAL_MARKDOWN_LINK, style);
-    if (labelLength != 0) {
-        if (!emitInline(self, wrap, label, labelLength, TERMINAL_MARKDOWN_LINK, style, depth + 1u))
-            return false;
-    } else if (!appendPlain(self, wrap, text + targetStart, targetEnd - targetStart,
-                            TERMINAL_MARKDOWN_LINK, style)) {
+// Place ONE parsed span: wrap it as a word (which can split it across rows), then
+// give every segment it produced the span's link and the row's variant.
+static bool wrapSpan(TerminalMarkdownView *self, MarkdownWrap *wrap, const MarkdownSpan *span,
+                     uint8_t variant) {
+    size_t first = (*self).segmentCount;
+    // A code span is one unbreakable unit; every other span wraps at spaces, so
+    // `**two words**` does not become a single 11-cell word.
+    bool placed = (*span).role == TERMINAL_MARKDOWN_CODE
+                ? wrapWord(self, wrap, (*span).text, (*span).length, (*span).role, (*span).style)
+                : appendPlain(self, wrap, (*span).text, (*span).length, (*span).role,
+                              (*span).style);
+    if (!placed)
         return false;
-    }
-    if (targetEnd > targetStart) {
-        wrapSpace(wrap);
-        if (!appendPlain(self, wrap, "(", 1u, TERMINAL_MARKDOWN_QUOTE, 0))
-            return false;
-        if (!appendPlain(self, wrap, text + targetStart, targetEnd - targetStart,
-                         TERMINAL_MARKDOWN_QUOTE, 0))
-            return false;
-        if (!appendPlain(self, wrap, ")", 1u, TERMINAL_MARKDOWN_QUOTE, 0))
-            return false;
-    }
-    return true;
+    return stampRange(self, first, variant, (*span).link, (*span).linkLength);
 }
 
-static bool emitInline(TerminalMarkdownView *self, MarkdownWrap *wrap, const char *text,
-                       size_t length, TerminalMarkdownRole base, uint8_t style, size_t depth) {
-    if (depth > MARKDOWN_MAX_INLINE_DEPTH)
-        return appendPlain(self, wrap, text, length, base, style);
-    size_t at = 0;
-    while (at < length) {
-        char character = text[at];
-        if (character == '\\' && at + 1u < length && isPunctuation(text[at + 1u])) {
-            if (!appendPlain(self, wrap, text + at + 1u, 1u, base, style))
-                return false;
-            at += 2u;
-            continue;
-        }
-        if (character == '`') {
-            size_t run = 0;
-            while (at + run < length && text[at + run] == '`')
-                ++run;
-            size_t close = findBacktickRun(text, length, at + run, run);
-            if (close != MARKDOWN_NO_INDEX) {
-                if (!wrapWord(self, wrap, text + at + run, close - at - run,
-                              TERMINAL_MARKDOWN_CODE, 0))
-                    return false;
-                at = close + run;
-                continue;
-            }
-        }
-        if ((character == '*' || character == '_') && at + 1u < length
-            && text[at + 1u] == character) {
-            size_t close = findBytes(text, length, at + 2u, text + at, 2u);
-            if (close != MARKDOWN_NO_INDEX) {
-                if (!emitInline(self, wrap, text + at + 2u, close - at - 2u, base,
-                                (uint8_t) (style | TERMINAL_STYLE_BOLD), depth + 1u))
-                    return false;
-                at = close + 2u;
-                continue;
-            }
-        }
-        if (character == '*' || character == '_') {
-            size_t close = findBytes(text, length, at + 1u, text + at, 1u);
-            if (close != MARKDOWN_NO_INDEX) {
-                if (!emitInline(self, wrap, text + at + 1u, close - at - 1u, base,
-                                (uint8_t) (style | TERMINAL_STYLE_UNDERLINE), depth + 1u))
-                    return false;
-                at = close + 1u;
-                continue;
-            }
-        }
-        if (character == '!' && at + 1u < length && text[at + 1u] == '[') {
-            size_t close = findBytes(text, length, at + 2u, "]", 1u);
-            if (close != MARKDOWN_NO_INDEX) {
-                if (!appendPlain(self, wrap, MARKDOWN_IMAGE_GLYPH,
-                                 strlen(MARKDOWN_IMAGE_GLYPH), TERMINAL_MARKDOWN_MARKER, 0))
-                    return false;
-                if (!appendPlain(self, wrap, text + at + 2u, close - at - 2u,
-                                 TERMINAL_MARKDOWN_MARKER, 0))
-                    return false;
-                size_t after = findBytes(text, length, close, "](", 2u);
-                size_t end = after == MARKDOWN_NO_INDEX
-                           ? MARKDOWN_NO_INDEX : findBytes(text, length, after + 2u, ")", 1u);
-                at = end == MARKDOWN_NO_INDEX ? close + 1u : end + 1u;
-                continue;
-            }
-        }
-        if (character == '[') {
-            size_t close = findBytes(text, length, at + 1u, "]", 1u);
-            if (close != MARKDOWN_NO_INDEX) {
-                size_t paren = findBytes(text, length, close, "](", 2u);
-                size_t end = paren == MARKDOWN_NO_INDEX
-                           ? MARKDOWN_NO_INDEX : findBytes(text, length, paren + 2u, ")", 1u);
-                if (paren != MARKDOWN_NO_INDEX && end != MARKDOWN_NO_INDEX) {
-                    if (!emitLink(self, wrap, text, length, at, close, style, depth))
-                        return false;
-                    at = end + 1u;
-                    continue;
-                }
-            }
-        }
-        if (character == '<') {
-            size_t close = findBytes(text, length, at + 1u, ">", 1u);
-            if (close != MARKDOWN_NO_INDEX) {
-                const char *inner = text + at + 1u;
-                size_t innerLength = close - at - 1u;
-                if (innerLength >= 4u
-                    && (strncasecmp(inner, "http", 4u) == 0
-                        || strncasecmp(inner, "mailto", 6u) == 0)) {
-                    if (!appendPlain(self, wrap, inner, innerLength, TERMINAL_MARKDOWN_LINK, style))
-                        return false;
-                }
-                at = close + 1u;
-                continue;
-            }
-        }
-        size_t start = at;
-        while (at < length) {
-            char current = text[at];
-            if (current == '\\' || current == '`' || current == '*' || current == '_'
-                || current == '[' || current == '!' || current == '<')
-                break;
-            ++at;
-        }
-        if (at == start) {
-            if (!appendPlain(self, wrap, text + at, 1u, base, style))
-                return false;
-            ++at;
-        } else if (!appendPlain(self, wrap, text + start, at - start, base, style)) {
+// Parse a source span COLD into flat spans, then place them. The parser owns the
+// grammar (escapes, code runs, emphasis, links, images, autolinks); the view owns
+// only word wrapping. A span buffer that overflowed still parsed the tail, so the
+// bytes past the last emitted span are placed literally rather than dropped.
+static bool emitSpans(TerminalMarkdownView *self, MarkdownWrap *wrap, const char *text,
+                      size_t length, TerminalMarkdownRole base, uint16_t style,
+                      uint8_t variant) {
+    MarkdownSpan spans[MARKDOWN_INLINE_SPANS];
+    bool complete = true;
+    size_t count = TerminalMarkdownInline_parse(text, length, base, style, spans,
+                                                MARKDOWN_INLINE_SPANS, &complete);
+    for (size_t index = 0; index < count; ++index)
+        if (!wrapSpan(self, wrap, &spans[index], variant))
             return false;
-        }
-    }
-    return true;
+    if (complete || count == 0)
+        return true;
+    const MarkdownSpan *last = &spans[count - 1u];
+    size_t consumed = (size_t) ((*last).text + (*last).length - text);
+    if (consumed >= length)
+        return true;
+    return appendPlain(self, wrap, text + consumed, length - consumed, base, style);
 }
 
 static size_t leadingSpaces(const char *text, size_t length) {
-    size_t at = 0;
-    while (at < length && text[at] == ' ')
-        ++at;
-    return at;
+    return TerminalMarkdownText_leadingSpaces(text, length);
 }
 
 static bool lineBlank(const char *text, size_t length) {
-    for (size_t at = 0; at < length; ++at)
-        if (!isSpace(text[at]))
-            return false;
-    return true;
+    return TerminalMarkdownText_blank(text, length);
 }
 
 static size_t trimRight(const char *text, size_t length) {
-    while (length > 0 && isSpace(text[length - 1u]))
-        --length;
-    return length;
+    return TerminalMarkdownText_trimRight(text, length);
 }
 
 static size_t headingLevel(const char *text, size_t length) {
@@ -980,57 +801,6 @@ static MarkdownListMarker listMarker(const char *text, size_t length) {
     return marker;
 }
 
-static bool tableDelimiter(const char *text, size_t length, size_t *columns) {
-    size_t count = 0;
-    size_t at = 0;
-    if (length == 0)
-        return false;
-    if (text[at] == '|')
-        ++at;
-    while (at < length) {
-        size_t start = at;
-        while (at < length && text[at] != '|')
-            ++at;
-        size_t cellLength = at - start;
-        while (cellLength > 0 && isSpace(text[start]))
-            ++start, --cellLength;
-        while (cellLength > 0 && isSpace(text[start + cellLength - 1u]))
-            --cellLength;
-        if (cellLength == 0 && count != 0 && at + 1u == length && text[at] == '|')
-            break;
-        if (cellLength == 0)
-            return false;
-        size_t colons = 0;
-        size_t dashes = 0;
-        for (size_t index = 0; index < cellLength; ++index) {
-            char current = text[start + index];
-            if (current == ':')
-                ++colons;
-            else if (current == '-')
-                ++dashes;
-            else
-                return false;
-        }
-        if (colons > 2u || dashes < 1u)
-            return false;
-        ++count;
-        if (at == length)
-            break;
-        ++at;
-        if (at == length)
-            break;
-    }
-    *columns = count;
-    return count >= 2u;
-}
-
-static bool tableCandidate(const char *text, size_t length, const char *next, size_t nextLength,
-                           size_t *columns) {
-    if (findBytes(text, length, 0, "|", 1u) == MARKDOWN_NO_INDEX)
-        return false;
-    return tableDelimiter(next, nextLength, columns);
-}
-
 static bool emitGap(TerminalMarkdownView *self) {
     if ((*self).rowCount == 0)
         return true;
@@ -1055,7 +825,10 @@ static bool emitHeading(TerminalMarkdownView *self, const char *text, size_t len
     MarkdownPrefix prefix = {0};
     MarkdownWrap wrap = { .prefix = &prefix, .width = (*self).width };
     size_t bodyStart = headingTextStart(text, length, &length);
-    if (!emitInline(self, &wrap, text + bodyStart, length, TERMINAL_MARKDOWN_HEADING, 0, 0))
+    // The level travels with every segment, so the theme can resolve a different
+    // pen for `#` and `####` at render time without reflowing the document.
+    if (!emitSpans(self, &wrap, text + bodyStart, length, TERMINAL_MARKDOWN_HEADING, 0,
+                   (uint8_t) level))
         return false;
     if (level == 1u && (*self).width != 0)
         return emitRule(self, (*self).width);
@@ -1066,28 +839,56 @@ static bool emitParagraphLine(TerminalMarkdownView *self, MarkdownWrap *wrap, co
                               size_t length) {
     size_t spaces = leadingSpaces(text, length);
     if (spaces < length && spaces <= 3u)
-        return emitInline(self, wrap, text + spaces, length - spaces, TERMINAL_MARKDOWN_BODY, 0, 0);
-    return emitInline(self, wrap, text, length, TERMINAL_MARKDOWN_BODY, 0, 0);
+        return emitSpans(self, wrap, text + spaces, length - spaces, TERMINAL_MARKDOWN_BODY, 0, 0);
+    return emitSpans(self, wrap, text, length, TERMINAL_MARKDOWN_BODY, 0, 0);
 }
 
-// Extract one DISPLAY/COPY line of a fenced block. A top-level fence uses the
-// source line verbatim (its indentation is code); a fence inside a quote strips the
-// quote markers first. False means the line does not carry the expected quote depth.
-static bool fenceContentText(const char *line, size_t quoteDepth, const char **text,
-                             size_t *length) {
-    size_t lineLength = strlen(line);
-    size_t start = 0;
-    if (quoteDepth != 0) {
-        size_t depth = 0;
-        size_t contentStart = 0;
-        if (!quoteLine(line, lineLength, &depth, &contentStart) || depth != quoteDepth)
+// One fenced block, painted through whatever gutter the container uses. The
+// prefix is the ONLY difference between a top-level fence, one inside a quote and
+// one inside a callout: the line walk, the shading and the copy range are shared.
+// `quoteDepth` is the number of `>` markers each source line carries (0 at top
+// level), so the copy projection can strip exactly those.
+static bool emitFenceBlock(TerminalMarkdownView *self, const char *const *lines, size_t lineCount,
+                           size_t *index, const MarkdownPrefix *prefix,
+                           char marker, size_t run, size_t quoteDepth) {
+    size_t start = *index;
+    size_t at = start + 1u;
+    size_t contentEnd = at;
+    size_t firstRow = (*self).rowCount;
+    MarkdownWrap wrap = { .prefix = prefix, .width = (*self).width };
+    bool first = true;
+    while (at < lineCount) {
+        const char *line = lines[at];
+        size_t length = strlen(line);
+        size_t contentOffset = 0;
+        if (quoteDepth != 0) {
+            size_t lineDepth = 0;
+            size_t lineContent = 0;
+            if (!quoteLine(line, length, &lineDepth, &lineContent) || lineDepth != quoteDepth)
+                break;
+            contentOffset = lineContent;
+        }
+        if (isClosingFence(line + contentOffset, length - contentOffset, marker, run)) {
+            contentEnd = at;
+            ++at;
+            break;
+        }
+        contentEnd = at + 1u;
+        if (!wrapStart(self, &wrap, first))
             return false;
-        start = contentStart;
+        first = false;
+        if (length > contentOffset
+            && !wrapWord(self, &wrap, line + contentOffset, length - contentOffset,
+                         TERMINAL_MARKDOWN_FENCE, 0))
+            return false;
+        ++at;
     }
-    if (start > lineLength)
-        start = lineLength;
-    *text = line + start;
-    *length = lineLength - start;
+    markCodeRows(self, firstRow);
+    if (!TerminalMarkdownCodeBlockPool_add((*self).codeBlocks, firstRow,
+                                           (*self).rowCount - firstRow, start + 1u,
+                                           contentEnd - (start + 1u), quoteDepth))
+        return false;
+    *index = at;
     return true;
 }
 
@@ -1096,85 +897,21 @@ static bool emitFence(TerminalMarkdownView *self, const char *const *lines, size
     (void) contentStart;
     if (!emitGap(self))
         return false;
-    size_t start = *index;
-    size_t at = start + 1u;
-    size_t contentEnd = at;
-    size_t firstRow = (*self).rowCount;
     MarkdownPrefix prefix = {0};
     prefixSpaces(&prefix, MARKDOWN_CODE_BLOCK_PAD, TERMINAL_MARKDOWN_FENCE, 0);
     prefix.repeatOnWrap = true;
-    MarkdownWrap wrap = { .prefix = &prefix, .width = (*self).width };
-    bool first = true;
-    while (at < lineCount) {
-        size_t length = strlen(lines[at]);
-        if (isClosingFence(lines[at], length, marker, run)) {
-            contentEnd = at;
-            ++at;
-            break;
-        }
-        contentEnd = at + 1u;
-        if (!wrapStart(self, &wrap, first))
-            return false;
-        first = false;
-        if (length != 0
-            && !wrapWord(self, &wrap, lines[at], length, TERMINAL_MARKDOWN_FENCE, 0))
-            return false;
-        ++at;
-    }
-    markCodeRows(self, firstRow);
-    if (!appendCodeBlock(self, firstRow, (*self).rowCount - firstRow, start + 1u,
-                         contentEnd - (start + 1u), 0))
+    if (!emitFenceBlock(self, lines, lineCount, index, &prefix, marker, run, 0))
         return false;
-    if (!emitGap(self))
-        return false;
-    *index = at;
-    return true;
+    return emitGap(self);
 }
 
-// A fence INSIDE a blockquote/callout: the quote gutter repeats on every shaded
-// row, the code content has its quote markers stripped, and the copy projection
-// remembers the depth so it can strip them too.
 static bool emitQuoteFence(TerminalMarkdownView *self, const char *const *lines,
                            size_t lineCount, size_t *index, char marker, size_t run,
                            size_t quoteDepth) {
-    size_t start = *index;
-    size_t at = start + 1u;
-    size_t contentEnd = at;
-    size_t firstRow = (*self).rowCount;
     MarkdownPrefix prefix = {0};
     prefixQuote(&prefix, quoteDepth);
     prefix.repeatOnWrap = true;
-    MarkdownWrap wrap = { .prefix = &prefix, .width = (*self).width };
-    bool first = true;
-    while (at < lineCount) {
-        const char *line = lines[at];
-        size_t length = strlen(line);
-        size_t depth = 0;
-        size_t lineContent = 0;
-        if (!quoteLine(line, length, &depth, &lineContent) || depth != quoteDepth)
-            break;
-        if (isClosingFence(line + lineContent, length - lineContent, marker, run)) {
-            contentEnd = at;
-            ++at;
-            break;
-        }
-        contentEnd = at + 1u;
-        size_t textLength = length - lineContent;
-        if (!wrapStart(self, &wrap, first))
-            return false;
-        first = false;
-        if (textLength != 0
-            && !wrapWord(self, &wrap, line + lineContent, textLength,
-                         TERMINAL_MARKDOWN_FENCE, 0))
-            return false;
-        ++at;
-    }
-    markCodeRows(self, firstRow);
-    if (!appendCodeBlock(self, firstRow, (*self).rowCount - firstRow, start + 1u,
-                         contentEnd - (start + 1u), quoteDepth))
-        return false;
-    *index = at;
-    return true;
+    return emitFenceBlock(self, lines, lineCount, index, &prefix, marker, run, quoteDepth);
 }
 
 static bool emitList(TerminalMarkdownView *self, const char *const *lines, size_t lineCount,
@@ -1234,9 +971,8 @@ static bool emitList(TerminalMarkdownView *self, const char *const *lines, size_
         MarkdownWrap wrap = { .prefix = &prefix, .width = (*self).width };
         size_t contentEnd = trimRight(lines[at], length);
         if (contentEnd > marker.contentStart) {
-            if (!emitInline(self, &wrap, lines[at] + marker.contentStart,
-                            contentEnd - marker.contentStart,
-                            TERMINAL_MARKDOWN_BODY, 0, 0))
+            if (!emitSpans(self, &wrap, lines[at] + marker.contentStart,
+                           contentEnd - marker.contentStart, TERMINAL_MARKDOWN_BODY, 0, 0))
                 return false;
         } else if (!wrapStart(self, &wrap, true)) {
             return false;
@@ -1254,8 +990,8 @@ static bool emitList(TerminalMarkdownView *self, const char *const *lines, size_
                 break;
             wrapSpace(&wrap);
             size_t end = trimRight(lines[next], nextLength);
-            if (!emitInline(self, &wrap, lines[next] + spaces, end - spaces,
-                            TERMINAL_MARKDOWN_BODY, 0, 0))
+            if (!emitSpans(self, &wrap, lines[next] + spaces, end - spaces,
+                           TERMINAL_MARKDOWN_BODY, 0, 0))
                 return false;
             ++next;
         }
@@ -1269,6 +1005,121 @@ static bool emitList(TerminalMarkdownView *self, const char *const *lines, size_
     return true;
 }
 
+static bool startsBlock(const char *text, size_t length);
+
+// The gutter every callout shares: the bar, one space, repeated on every wrapped
+// row. Severity is the pen, not the shape, so a NOTE and a CAUTION read as the
+// same kind of object with different urgency.
+static void prefixCallout(MarkdownPrefix *prefix, TerminalMarkdownCalloutKind kind) {
+    prefixAddVariant(prefix, TerminalMarkdownCallout_bar(),
+                     strlen(TerminalMarkdownCallout_bar()),
+                     TERMINAL_MARKDOWN_CALLOUT, TERMINAL_STYLE_BOLD, (uint8_t) kind);
+    prefixAddVariant(prefix, " ", 1u, TERMINAL_MARKDOWN_CALLOUT, 0, (uint8_t) kind);
+    (*prefix).repeatOnWrap = true;
+}
+
+// A callout: a bold `KIND` label on the bar's row, the optional title beside it,
+// and an unbolded BODY-role body indented by the bar. The marker itself is never
+// printed. Fences inside the aside keep the bar as their gutter.
+static bool emitCallout(TerminalMarkdownView *self, const char *const *lines, size_t lineCount,
+                        size_t *index, size_t depth, size_t contentStart,
+                        TerminalMarkdownCallout callout) {
+    if (!emitGap(self))
+        return false;
+    MarkdownPrefix prefix = {0};
+    if (depth > 1u)
+        prefixQuote(&prefix, depth - 1u);
+    prefixCallout(&prefix, callout.kind);
+    MarkdownWrap wrap = { .prefix = &prefix, .width = (*self).width };
+    size_t at = *index;
+    size_t length = strlen(lines[at]);
+    size_t end = trimRight(lines[at], length);
+    if (!wrapStart(self, &wrap, true))
+        return false;
+    const char *name = TerminalMarkdownCallout_name(callout.kind);
+    size_t nameCells = cellsOf(name, strlen(name));
+    size_t first = (*self).segmentCount;
+    if (!appendSegment(self, name, strlen(name), 1u, TERMINAL_MARKDOWN_CALLOUT,
+                       TERMINAL_STYLE_BOLD))
+        return false;
+    stampRange(self, first, (uint8_t) callout.kind, nullptr, 0);
+    wrap.x += nameCells;
+    wrap.content = true;
+    if (contentStart < end) {
+        wrapSpace(&wrap);
+        if (!emitSpans(self, &wrap, lines[at] + contentStart, end - contentStart,
+                       TERMINAL_MARKDOWN_CALLOUT, 0, (uint8_t) callout.kind))
+            return false;
+    }
+    bool body = false;
+    bool labelOpen = true;
+    ++at;
+    while (at < lineCount) {
+        size_t lineLength = strlen(lines[at]);
+        size_t content = 0;
+        if (depth != 0) {
+            size_t lineDepth = 0;
+            if (!quoteLine(lines[at], lineLength, &lineDepth, &content) || lineDepth != depth)
+                break;
+        }
+        char fenceMarker = 0;
+        size_t fenceRun = 0;
+        size_t fenceOffset = 0;
+        bool fence = isFence(lines[at] + content, lineLength - content,
+                             &fenceMarker, &fenceRun, &fenceOffset);
+        if (!fence && depth == 0 && startsBlock(lines[at], lineLength))
+            break;
+        size_t lineEnd = trimRight(lines[at], lineLength);
+        if (fence) {
+            if (labelOpen && !body) {
+                if (!wrapBreak(self, &wrap))
+                    return false;
+                labelOpen = false;
+            }
+            wrap.open = false;
+            wrap.started = false;
+            wrap.content = false;
+            if (!emitGap(self))
+                return false;
+            size_t blockStart = at;
+            if (!emitFenceBlock(self, lines, lineCount, &at, &prefix,
+                                fenceMarker, fenceRun, depth))
+                return false;
+            if (at == blockStart)
+                ++at;
+            if (!emitGap(self))
+                return false;
+            body = true;
+            continue;
+        }
+        if (lineEnd <= content) {
+            if (depth == 0)
+                break;
+            if (wrap.open && wrap.content && !wrapBreak(self, &wrap))
+                return false;
+            ++at;
+            continue;
+        }
+        if (!body) {
+            if (labelOpen && !wrapBreak(self, &wrap))
+                return false;
+            labelOpen = false;
+            body = true;
+        } else {
+            wrapSpace(&wrap);
+        }
+        if (!emitSpans(self, &wrap, lines[at] + content, lineEnd - content,
+                       TERMINAL_MARKDOWN_BODY, 0, 0))
+            return false;
+        ++at;
+    }
+    *index = at;
+    return true;
+}
+
+// A blockquote, or a callout when its first content span names a severity. The
+// two spellings of a callout — GFM's `> [!NOTE]` and a README's `!NOTE!` — both
+// land here; only the marker is different, so only the marker is parsed away.
 static bool emitQuote(TerminalMarkdownView *self, const char *const *lines, size_t lineCount,
                       size_t *index) {
     if (!emitGap(self))
@@ -1278,25 +1129,29 @@ static bool emitQuote(TerminalMarkdownView *self, const char *const *lines, size
     size_t contentStart = 0;
     if (!quoteLine(lines[at], strlen(lines[at]), &depth, &contentStart))
         return false;
+    size_t length = strlen(lines[at]);
+    size_t end = trimRight(lines[at], length);
+    TerminalMarkdownCallout callout =
+        TerminalMarkdownCallout_parse(lines[at] + contentStart, end > contentStart
+                                                             ? end - contentStart : 0u);
+    if (callout.valid)
+        return emitCallout(self, lines, lineCount, index, depth,
+                           contentStart + callout.contentStart, callout);
     MarkdownPrefix prefix = {0};
     prefixQuote(&prefix, depth);
     MarkdownWrap wrap = { .prefix = &prefix, .width = (*self).width };
-    bool callout = false;
     while (at < lineCount) {
-        size_t length = strlen(lines[at]);
+        size_t lineLength = strlen(lines[at]);
         size_t lineDepth = 0;
         size_t lineContent = 0;
-        if (!quoteLine(lines[at], length, &lineDepth, &lineContent))
+        if (!quoteLine(lines[at], lineLength, &lineDepth, &lineContent))
             break;
         if (lineDepth != depth)
             break;
-        // A fence inside the quote is still a fence: strip the quote markers, shade
-        // the same block band, and keep the quote gutter on every row. Callouts use
-        // this path too, so a WARNING can contain a real code block.
         char fenceMarker = 0;
         size_t fenceRun = 0;
         size_t fenceOffset = 0;
-        if (isFence(lines[at] + lineContent, length - lineContent,
+        if (isFence(lines[at] + lineContent, lineLength - lineContent,
                     &fenceMarker, &fenceRun, &fenceOffset)) {
             if (!emitGap(self))
                 return false;
@@ -1310,44 +1165,11 @@ static bool emitQuote(TerminalMarkdownView *self, const char *const *lines, size
                 return false;
             continue;
         }
-        size_t end = trimRight(lines[at], length);
-        if (!callout && end - lineContent >= 5u
-            && lines[at][lineContent] == '[' && lines[at][lineContent + 1u] == '!') {
-            size_t close = lineContent + 2u;
-            while (close < end && lines[at][close] != ']')
-                ++close;
-            if (close < end && close > lineContent + 2u) {
-                callout = true;
-                if (!wrapStart(self, &wrap, true)
-                    || !appendSegment(self, "! ", 2u, 1u,
-                                      TERMINAL_MARKDOWN_MARKER, TERMINAL_STYLE_BOLD)
-                    || !appendSegment(self, lines[at] + lineContent + 2u,
-                                      close - lineContent - 2u, 1u,
-                                      TERMINAL_MARKDOWN_MARKER, TERMINAL_STYLE_BOLD)
-                    || !appendSegment(self, " !", 2u, 1u,
-                                      TERMINAL_MARKDOWN_MARKER, TERMINAL_STYLE_BOLD))
-                    return false;
-                wrap.x += 2u + cellsOf(lines[at] + lineContent + 2u,
-                                       close - lineContent - 2u) + 2u;
-                wrap.content = true;
-                if (!wrapBreak(self, &wrap))
-                    return false;
-                wrap.open = false;
-                wrap.pendingSpace = false;
-                if (close + 1u < end) {
-                    if (!emitInline(self, &wrap, lines[at] + close + 1u,
-                                    end - close - 1u, TERMINAL_MARKDOWN_BODY, 0, 0))
-                        return false;
-                }
-                ++at;
-                continue;
-            }
-        }
-        if (end > lineContent) {
+        size_t lineEnd = trimRight(lines[at], lineLength);
+        if (lineEnd > lineContent) {
             wrapSpace(&wrap);
-            if (!emitInline(self, &wrap, lines[at] + lineContent, end - lineContent,
-                            callout ? TERMINAL_MARKDOWN_BODY : TERMINAL_MARKDOWN_QUOTE,
-                            0, 0))
+            if (!emitSpans(self, &wrap, lines[at] + lineContent, lineEnd - lineContent,
+                           TERMINAL_MARKDOWN_QUOTE, 0, 0))
                 return false;
         } else if (!wrap.open) {
             if (!wrapStart(self, &wrap, !wrap.started))
@@ -1361,198 +1183,78 @@ static bool emitQuote(TerminalMarkdownView *self, const char *const *lines, size
     return true;
 }
 
-static void tableCells(const char *text, size_t length, const char **cells, size_t *lengths,
-                       size_t *count) {
-    size_t at = 0;
-    size_t total = 0;
-    while (at <= length && total < MARKDOWN_MAX_COLUMNS) {
-        size_t start = at;
-        while (at < length && text[at] != '|')
-            ++at;
-        size_t startTrim = start;
-        size_t endTrim = at;
-        while (startTrim < endTrim && isSpace(text[startTrim]))
-            ++startTrim;
-        while (endTrim > startTrim && isSpace(text[endTrim - 1u]))
-            --endTrim;
-        if (total == 0 && startTrim == endTrim && at < length) {
-            ++at;
-            continue;
-        }
-        cells[total] = text + startTrim;
-        lengths[total] = endTrim - startTrim;
-        ++total;
-        if (at < length)
-            ++at;
-        else
-            break;
-    }
-    *count = total;
-}
-
-static MarkdownCellLine tableCellLine(const char *text, size_t length, size_t offset,
-                                      size_t width) {
-    MarkdownCellLine line = { .text = text + length, .next = length };
-    while (offset < length && isSpace(text[offset]))
-        ++offset;
-    line.text = text + offset;
-    if (offset == length)
-        return line;
-    size_t at = offset;
-    size_t used = 0;
-    size_t lastSpace = MARKDOWN_NO_INDEX;
-    size_t afterSpace = MARKDOWN_NO_INDEX;
-    while (at < length) {
-        if (isSpace(text[at]) && at > offset) {
-            lastSpace = at;
-            afterSpace = at + 1u;
-            while (afterSpace < length && isSpace(text[afterSpace]))
-                ++afterSpace;
-        }
-        TerminalCanvasDecodedScalar decoded = TerminalCanvas_utf8Decode(text + at, length - at);
-        size_t bytes = decoded.bytes == 0 ? 1u : decoded.bytes;
-        size_t glyphCells = decoded.bytes == 0 ? 1u
-                          : TerminalCanvas_widthOf(decoded.codepoint);
-        if (glyphCells > width - (used < width ? used : width)) {
-            if (lastSpace != MARKDOWN_NO_INDEX) {
-                line.length = lastSpace - offset;
-                line.next = afterSpace;
-                line.cells = cellsOf(line.text, line.length);
-                return line;
-            }
-            if (at == offset) {
-                at += bytes;
-                used += glyphCells;
-            }
-            line.length = at - offset;
-            line.next = at;
-            line.cells = used;
-            return line;
-        }
-        used += glyphCells;
-        at += bytes;
-    }
-    line.length = at - offset;
-    line.next = length;
-    line.cells = used;
-    return line;
-}
-
-static size_t tableCellLineCount(const char *text, size_t length, size_t width) {
-    size_t offset = 0;
-    size_t count = 0;
-    do {
-        MarkdownCellLine line = tableCellLine(text, length, offset, width);
-        ++count;
-        if (line.next >= length || line.next <= offset)
-            break;
-        offset = line.next;
-    } while (offset < length);
-    return count;
-}
-
-static size_t tableColumnMinimum(const char *const *lines, size_t first, size_t end,
-                                 size_t column) {
-    const char *cells[MARKDOWN_MAX_COLUMNS];
-    size_t lengths[MARKDOWN_MAX_COLUMNS];
-    size_t count = 0;
-    size_t minimum = 0;
-    for (size_t row = first; row < end; ++row) {
-        tableCells(lines[row], strlen(lines[row]), cells, lengths, &count);
-        if (column >= count)
-            continue;
-        size_t at = 0;
-        size_t wordCells = 0;
-        while (at <= lengths[column]) {
-            if (at == lengths[column] || isSpace(cells[column][at])) {
-                if (wordCells > minimum)
-                    minimum = wordCells;
-                wordCells = 0;
-                ++at;
-                continue;
-            }
-            TerminalCanvasDecodedScalar decoded = TerminalCanvas_utf8Decode(
-                cells[column] + at, lengths[column] - at);
-            size_t bytes = decoded.bytes == 0 ? 1u : decoded.bytes;
-            wordCells += decoded.bytes == 0 ? 1u
-                         : TerminalCanvas_widthOf(decoded.codepoint);
-            at += bytes;
-        }
-    }
-    return minimum == 0u ? 1u : minimum;
-}
-
-static bool tableAllocateWidths(const size_t *needed, const size_t *minimums,
-                                size_t *widths, size_t columns, size_t viewport) {
-    size_t overhead = columns * 3u + 1u;
-    if (viewport <= overhead)
+static bool tableCandidate(const char *text, size_t length, const char *next, size_t nextLength,
+                           size_t *columns) {
+    const char *cells[TERMINAL_MARKDOWN_TABLE_COLUMNS];
+    size_t lengths[TERMINAL_MARKDOWN_TABLE_COLUMNS];
+    if (TerminalMarkdownTable_split(text, length, cells, lengths,
+                                    TERMINAL_MARKDOWN_TABLE_COLUMNS) < 2u)
         return false;
-    size_t available = viewport - overhead;
-    size_t neededTotal = 0;
-    size_t minimumTotal = 0;
-    bool neededFits = true;
-    bool minimumsFit = true;
-    for (size_t column = 0; column < columns; ++column) {
-        if (needed[column] > available - neededTotal) {
-            neededFits = false;
-            neededTotal = available;
-        } else if (neededFits) {
-            neededTotal += needed[column];
-        }
-        if (minimums[column] > available - minimumTotal) {
-            minimumsFit = false;
-            minimumTotal = available;
-        } else if (minimumsFit) {
-            minimumTotal += minimums[column];
-        }
-        widths[column] = minimums[column];
-    }
-    if (!minimumsFit)
+    size_t count = TerminalMarkdownTable_parseDelimiter(next, nextLength, nullptr, 0);
+    if (count < 2u)
         return false;
-    if (neededFits) {
-        for (size_t column = 0; column < columns; ++column)
-            widths[column] = needed[column];
-        return true;
-    }
-    size_t extraBudget = available - minimumTotal;
-    size_t remainingNeed = 0;
-    for (size_t column = 0; column < columns; ++column) {
-        size_t extra = needed[column] > minimums[column]
-                     ? needed[column] - minimums[column] : 0u;
-        if (extra > SIZE_MAX - remainingNeed)
-            remainingNeed = SIZE_MAX;
-        else
-            remainingNeed += extra;
-    }
-    if (remainingNeed == 0u)
-        return true;
-    size_t used = 0;
-    long double fractions[MARKDOWN_MAX_COLUMNS] = {0};
-    for (size_t column = 0; column < columns; ++column) {
-        size_t extra = needed[column] > minimums[column]
-                     ? needed[column] - minimums[column] : 0u;
-        long double share = (long double) extraBudget * (long double) extra
-                          / (long double) remainingNeed;
-        size_t whole = (size_t) share;
-        if (whole > extra)
-            whole = extra;
-        widths[column] += whole;
-        used += whole;
-        fractions[column] = whole == extra ? -1.0L : share - (long double) whole;
-    }
-    while (used < extraBudget) {
-        size_t chosen = MARKDOWN_NO_INDEX;
-        for (size_t column = 0; column < columns; ++column)
-            if (fractions[column] >= 0.0L
-                && (chosen == MARKDOWN_NO_INDEX || fractions[column] > fractions[chosen]))
-                chosen = column;
-        if (chosen == MARKDOWN_NO_INDEX)
-            break;
-        ++widths[chosen];
-        ++used;
-        fractions[chosen] = -1.0L;
+    if (columns != nullptr)
+        *columns = count;
+    return true;
+}
+
+static bool appendTableSpaces(TerminalMarkdownView *self, size_t cells) {
+    while (cells != 0u) {
+        size_t chunk = cells > MARKDOWN_SPACES_CAP ? MARKDOWN_SPACES_CAP : cells;
+        if (!appendSegment(self, MARKDOWN_SPACES, chunk, 1u, TERMINAL_MARKDOWN_BODY, 0))
+            return false;
+        cells -= chunk;
     }
     return true;
+}
+
+// Place an already-wrapped cell slice exactly where the width policy put it: no
+// re-wrapping, because the table decided the break. Inline styling still applies,
+// so `**bold**` and `` `code` `` in a cell lose their markers like they do in a
+// paragraph.
+static bool appendCellSpans(TerminalMarkdownView *self, const char *text, size_t length,
+                            TerminalMarkdownRole base, uint16_t style) {
+    MarkdownSpan spans[MARKDOWN_INLINE_SPANS];
+    bool complete = true;
+    size_t count = TerminalMarkdownInline_parse(text, length, base, style, spans,
+                                                MARKDOWN_INLINE_SPANS, &complete);
+    size_t consumed = 0;
+    for (size_t index = 0; index < count; ++index) {
+        const MarkdownSpan *span = &spans[index];
+        size_t first = (*self).segmentCount;
+        if (!appendSegment(self, (*span).text, (*span).length, 1u, (*span).role, (*span).style))
+            return false;
+        stampRange(self, first, 0, (*span).link, (*span).linkLength);
+        consumed = (size_t) ((*span).text + (*span).length - text);
+    }
+    if (complete || consumed >= length)
+        return true;
+    return appendSegment(self, text + consumed, length - consumed, 1u, base, style);
+}
+
+// One visual line of one cell: alignment padding, the styled text, and — only
+// when the width policy had to cut inside a word — an honest ellipsis.
+static bool emitCellLine(TerminalMarkdownView *self, const TerminalMarkdownTableCellLine *line,
+                         size_t width, TerminalMarkdownTableAlign align,
+                         TerminalMarkdownRole role, uint16_t style) {
+    size_t used = (*line).cells;
+    if (used > width)
+        used = width;
+    size_t slack = width - used;
+    size_t lead = align == TERMINAL_MARKDOWN_TABLE_CENTER ? slack / 2u
+                : align == TERMINAL_MARKDOWN_TABLE_RIGHT ? slack : 0u;
+    if (lead != 0 && !appendTableSpaces(self, lead))
+        return false;
+    if (!appendCellSpans(self, (*line).text, (*line).length, role, style))
+        return false;
+    size_t tail = slack - lead;
+    if ((*line).truncated) {
+        if (!appendSegment(self, "…", strlen("…"), 1u, role, style))
+            return false;
+        if (tail != 0)
+            --tail;
+    }
+    return tail == 0 || appendTableSpaces(self, tail);
 }
 
 static bool emitTableBorder(TerminalMarkdownView *self, const size_t *widths,
@@ -1565,71 +1267,64 @@ static bool emitTableBorder(TerminalMarkdownView *self, const size_t *widths,
                        : kind == 1u ? MARKDOWN_BORDER_RIGHT_MIDDLE
                                     : MARKDOWN_BORDER_RIGHT_BOTTOM;
     if (!appendRow(self)
-        || !appendSegment(self, left, strlen(left), 1u, TERMINAL_MARKDOWN_RULE, 0))
+        || !appendSegment(self, left, strlen(left), 1u, TERMINAL_MARKDOWN_TABLE_BORDER, 0))
         return false;
     for (size_t column = 0; column < columns; ++column) {
         if (!appendSegment(self, MARKDOWN_BORDER_HORIZONTAL,
                            strlen(MARKDOWN_BORDER_HORIZONTAL), widths[column] + 2u,
-                           TERMINAL_MARKDOWN_RULE, 0))
+                           TERMINAL_MARKDOWN_TABLE_BORDER, 0))
             return false;
         if (column + 1u < columns
-            && !appendSegment(self, join, strlen(join), 1u, TERMINAL_MARKDOWN_RULE, 0))
+            && !appendSegment(self, join, strlen(join), 1u,
+                              TERMINAL_MARKDOWN_TABLE_BORDER, 0))
             return false;
     }
-    return appendSegment(self, right, strlen(right), 1u, TERMINAL_MARKDOWN_RULE, 0);
+    return appendSegment(self, right, strlen(right), 1u, TERMINAL_MARKDOWN_TABLE_BORDER, 0);
 }
 
-static bool appendTableSpaces(TerminalMarkdownView *self, size_t cells) {
-    while (cells != 0u) {
-        size_t chunk = cells > MARKDOWN_SPACES_CAP ? MARKDOWN_SPACES_CAP : cells;
-        if (!appendSegment(self, MARKDOWN_SPACES, chunk, 1u,
-                           TERMINAL_MARKDOWN_BODY, 0))
-            return false;
-        cells -= chunk;
-    }
-    return true;
-}
-
-static bool emitTableRow(TerminalMarkdownView *self, const char *const *cells,
-                         const size_t *lengths, size_t count, size_t columns,
-                         const size_t *widths, bool heading) {
-    size_t offsets[MARKDOWN_MAX_COLUMNS] = {0};
-    size_t heights[MARKDOWN_MAX_COLUMNS];
-    for (size_t column = 0; column < columns; ++column)
-        heights[column] = column < count
-                        ? tableCellLineCount(cells[column], lengths[column], widths[column])
-                        : 1u;
+static bool emitTableRow(TerminalMarkdownView *self, const char *text, size_t length,
+                         size_t columns, const size_t *widths,
+                         const TerminalMarkdownTableAlign *aligns, bool heading) {
+    const char *cells[TERMINAL_MARKDOWN_TABLE_COLUMNS];
+    size_t lengths[TERMINAL_MARKDOWN_TABLE_COLUMNS];
+    size_t count = TerminalMarkdownTable_split(text, length, cells, lengths,
+                                               TERMINAL_MARKDOWN_TABLE_COLUMNS);
+    size_t offsets[TERMINAL_MARKDOWN_TABLE_COLUMNS] = {0};
+    size_t heights[TERMINAL_MARKDOWN_TABLE_COLUMNS];
     size_t rowHeight = 1u;
-    for (size_t column = 0; column < columns; ++column)
+    for (size_t column = 0; column < columns; ++column) {
+        heights[column] = column < count
+                        ? TerminalMarkdownTable_lineCount(cells[column], lengths[column],
+                                                          widths[column])
+                        : 1u;
         if (heights[column] > rowHeight)
             rowHeight = heights[column];
+    }
+    TerminalMarkdownRole role = heading ? TERMINAL_MARKDOWN_TABLE_HEADER
+                                        : TERMINAL_MARKDOWN_BODY;
     for (size_t visualRow = 0; visualRow < rowHeight; ++visualRow) {
         if (!appendRow(self)
             || !appendSegment(self, MARKDOWN_BORDER_VERTICAL,
                               strlen(MARKDOWN_BORDER_VERTICAL), 1u,
-                              TERMINAL_MARKDOWN_RULE, 0)
+                              TERMINAL_MARKDOWN_TABLE_BORDER, 0)
             || !appendSegment(self, " ", 1u, 1u, TERMINAL_MARKDOWN_BODY, 0))
             return false;
         for (size_t column = 0; column < columns; ++column) {
-            MarkdownCellLine line = {0};
+            TerminalMarkdownTableCellLine line = {0};
             if (visualRow < heights[column]) {
                 const char *cell = column < count ? cells[column] : "";
-                size_t length = column < count ? lengths[column] : 0u;
-                line = tableCellLine(cell, length, offsets[column], widths[column]);
+                size_t cellLength = column < count ? lengths[column] : 0u;
+                line = TerminalMarkdownTable_cellLine(cell, cellLength, offsets[column],
+                                                      widths[column]);
                 offsets[column] = line.next;
-                if (!appendSegment(self, line.text, line.length, 1u,
-                                   heading ? TERMINAL_MARKDOWN_HEADING
-                                           : TERMINAL_MARKDOWN_BODY, 0))
-                    return false;
             }
-            if (line.cells < widths[column]
-                && !appendTableSpaces(self, widths[column] - line.cells))
+            if (!emitCellLine(self, &line, widths[column], aligns[column], role, 0))
                 return false;
             if (column + 1u < columns) {
                 if (!appendSegment(self, " ", 1u, 1u, TERMINAL_MARKDOWN_BODY, 0)
                     || !appendSegment(self, MARKDOWN_BORDER_VERTICAL,
                                       strlen(MARKDOWN_BORDER_VERTICAL), 1u,
-                                      TERMINAL_MARKDOWN_RULE, 0)
+                                      TERMINAL_MARKDOWN_TABLE_BORDER, 0)
                     || !appendSegment(self, " ", 1u, 1u, TERMINAL_MARKDOWN_BODY, 0))
                     return false;
             }
@@ -1637,31 +1332,35 @@ static bool emitTableRow(TerminalMarkdownView *self, const char *const *cells,
         if (!appendSegment(self, " ", 1u, 1u, TERMINAL_MARKDOWN_BODY, 0)
             || !appendSegment(self, MARKDOWN_BORDER_VERTICAL,
                               strlen(MARKDOWN_BORDER_VERTICAL), 1u,
-                              TERMINAL_MARKDOWN_RULE, 0))
+                              TERMINAL_MARKDOWN_TABLE_BORDER, 0))
             return false;
     }
     return true;
 }
 
+// The honest fallback when even the longest words cannot share the viewport: a
+// stacked label/value list instead of a clipped box. Nothing is cut; the table
+// simply stops pretending to be a grid.
 static bool emitTableCompact(TerminalMarkdownView *self, const char *const *lines,
                              size_t header, size_t end, size_t columns) {
-    const char *headers[MARKDOWN_MAX_COLUMNS];
-    size_t headerLengths[MARKDOWN_MAX_COLUMNS];
-    size_t headerCount = 0;
-    tableCells(lines[header], strlen(lines[header]), headers, headerLengths, &headerCount);
+    const char *headers[TERMINAL_MARKDOWN_TABLE_COLUMNS];
+    size_t headerLengths[TERMINAL_MARKDOWN_TABLE_COLUMNS];
+    size_t headerCount = TerminalMarkdownTable_split(lines[header], strlen(lines[header]),
+                                                     headers, headerLengths,
+                                                     TERMINAL_MARKDOWN_TABLE_COLUMNS);
     if (!emitGap(self))
         return false;
     for (size_t row = header + 2u; row < end; ++row) {
-        const char *cells[MARKDOWN_MAX_COLUMNS];
-        size_t lengths[MARKDOWN_MAX_COLUMNS];
-        size_t count = 0;
-        tableCells(lines[row], strlen(lines[row]), cells, lengths, &count);
+        const char *cells[TERMINAL_MARKDOWN_TABLE_COLUMNS];
+        size_t lengths[TERMINAL_MARKDOWN_TABLE_COLUMNS];
+        size_t count = TerminalMarkdownTable_split(lines[row], strlen(lines[row]), cells, lengths,
+                                                   TERMINAL_MARKDOWN_TABLE_COLUMNS);
         for (size_t column = 0; column < columns; ++column) {
             MarkdownPrefix prefix = {0};
             MarkdownWrap wrap = { .prefix = &prefix, .width = (*self).width };
             if (column < headerCount && headerLengths[column] != 0u) {
-                if (!emitInline(self, &wrap, headers[column], headerLengths[column],
-                                TERMINAL_MARKDOWN_HEADING, 0, 0))
+                if (!emitSpans(self, &wrap, headers[column], headerLengths[column],
+                               TERMINAL_MARKDOWN_TABLE_HEADER, 0, 0))
                     return false;
                 wrapSpace(&wrap);
                 if (!appendPlain(self, &wrap, ":", 1u, TERMINAL_MARKDOWN_BODY, 0))
@@ -1669,8 +1368,8 @@ static bool emitTableCompact(TerminalMarkdownView *self, const char *const *line
                 wrapSpace(&wrap);
             }
             if (column < count && lengths[column] != 0u) {
-                if (!emitInline(self, &wrap, cells[column], lengths[column],
-                                TERMINAL_MARKDOWN_BODY, 0, 0))
+                if (!emitSpans(self, &wrap, cells[column], lengths[column],
+                               TERMINAL_MARKDOWN_BODY, 0, 0))
                     return false;
             } else if (!wrapStart(self, &wrap, true)) {
                 return false;
@@ -1682,42 +1381,51 @@ static bool emitTableCompact(TerminalMarkdownView *self, const char *const *line
 
 static bool emitTable(TerminalMarkdownView *self, const char *const *lines, size_t lineCount,
                       size_t *index, size_t columns) {
-    if (columns > MARKDOWN_MAX_COLUMNS)
-        columns = MARKDOWN_MAX_COLUMNS;
-    size_t widths[MARKDOWN_MAX_COLUMNS] = {0};
-    size_t needed[MARKDOWN_MAX_COLUMNS] = {0};
-    size_t minimums[MARKDOWN_MAX_COLUMNS];
+    if (columns > TERMINAL_MARKDOWN_TABLE_COLUMNS)
+        columns = TERMINAL_MARKDOWN_TABLE_COLUMNS;
+    const char *cells[TERMINAL_MARKDOWN_TABLE_COLUMNS];
+    size_t lengths[TERMINAL_MARKDOWN_TABLE_COLUMNS];
     size_t header = *index;
+    TerminalMarkdownTableAlign aligns[TERMINAL_MARKDOWN_TABLE_COLUMNS] = {0};
+    size_t declared = TerminalMarkdownTable_parseDelimiter(lines[header + 1u],
+                                                           strlen(lines[header + 1u]),
+                                                           aligns,
+                                                           TERMINAL_MARKDOWN_TABLE_COLUMNS);
+    if (declared < columns)
+        columns = declared;
     size_t body = header + 2u;
     size_t end = body;
-    const char *cells[MARKDOWN_MAX_COLUMNS];
-    size_t lengths[MARKDOWN_MAX_COLUMNS];
-    size_t count = 0;
-    tableCells(lines[header], strlen(lines[header]), cells, lengths, &count);
-    for (size_t column = 0; column < columns && column < count; ++column) {
-        size_t width = cellsOf(cells[column], lengths[column]);
-        if (width > needed[column])
-            needed[column] = width;
-    }
     while (end < lineCount) {
         size_t length = strlen(lines[end]);
         if (lineBlank(lines[end], length)
             || findBytes(lines[end], length, 0, "|", 1u) == MARKDOWN_NO_INDEX)
             break;
-        tableCells(lines[end], length, cells, lengths, &count);
-        for (size_t column = 0; column < columns && column < count; ++column) {
-            size_t width = cellsOf(cells[column], lengths[column]);
-            if (width > needed[column])
-                needed[column] = width;
-        }
         ++end;
+    }
+    size_t needed[TERMINAL_MARKDOWN_TABLE_COLUMNS] = {0};
+    size_t minimums[TERMINAL_MARKDOWN_TABLE_COLUMNS] = {0};
+    size_t widths[TERMINAL_MARKDOWN_TABLE_COLUMNS] = {0};
+    for (size_t row = header; row < end; ++row) {
+        size_t count = TerminalMarkdownTable_split(lines[row], strlen(lines[row]), cells, lengths,
+                                                   TERMINAL_MARKDOWN_TABLE_COLUMNS);
+        for (size_t column = 0; column < columns; ++column) {
+            if (column >= count)
+                continue;
+            size_t natural = TerminalMarkdownTable_natural(cells[column], lengths[column]);
+            if (natural > needed[column])
+                needed[column] = natural;
+            size_t word = TerminalMarkdownTable_longestWord(cells[column], lengths[column]);
+            if (word > minimums[column])
+                minimums[column] = word;
+        }
     }
     for (size_t column = 0; column < columns; ++column) {
         if (needed[column] == 0u)
             needed[column] = 1u;
-        minimums[column] = tableColumnMinimum(lines, header, end, column);
+        if (minimums[column] == 0u)
+            minimums[column] = 1u;
     }
-    if (!tableAllocateWidths(needed, minimums, widths, columns, (*self).width)) {
+    if (!TerminalMarkdownTable_allocate(needed, minimums, widths, columns, (*self).width)) {
         if (!emitTableCompact(self, lines, header, end, columns))
             return false;
         *index = end;
@@ -1725,21 +1433,24 @@ static bool emitTable(TerminalMarkdownView *self, const char *const *lines, size
     }
     if (!emitGap(self))
         return false;
-    if (!emitTableBorder(self, widths, columns, 0u))
+    if (!emitTableBorder(self, widths, columns, 0u)
+        || !emitTableRow(self, lines[header], strlen(lines[header]), columns, widths,
+                         aligns, true))
         return false;
-    tableCells(lines[header], strlen(lines[header]), cells, lengths, &count);
-    if (!emitTableRow(self, cells, lengths, count, columns, widths, true)
-        || !emitTableBorder(self, widths, columns, 1u))
+    if (body == end) {
+        if (!emitTableBorder(self, widths, columns, 2u))
+            return false;
+        *index = end;
+        return true;
+    }
+    if (!emitTableBorder(self, widths, columns, 1u))
         return false;
     for (size_t row = body; row < end; ++row) {
-        tableCells(lines[row], strlen(lines[row]), cells, lengths, &count);
-        if (!emitTableRow(self, cells, lengths, count, columns, widths, false))
+        if (!emitTableRow(self, lines[row], strlen(lines[row]), columns, widths, aligns, false))
             return false;
         if (!emitTableBorder(self, widths, columns, row + 1u < end ? 1u : 2u))
             return false;
     }
-    if (body == end && !emitTableBorder(self, widths, columns, 2u))
-        return false;
     *index = end;
     return true;
 }
@@ -1765,7 +1476,7 @@ static bool startsBlock(const char *text, size_t length) {
 }
 
 static bool layout(TerminalMarkdownView *self) {
-    (*self).codeBlockCount = 0;
+    TerminalMarkdownCodeBlockPool_reset((*self).codeBlocks);
     size_t index = 0;
     while (index < (*self).lineCount && !(*self).failed && !(*self).truncated) {
         const char *line = (*self).lines[index];
@@ -1819,6 +1530,18 @@ static bool layout(TerminalMarkdownView *self) {
             if (!emitQuote(self, (*self).lines, (*self).lineCount, &index))
                 break;
             continue;
+        }
+        size_t calloutSpaces = leadingSpaces(line, length);
+        if (calloutSpaces <= 3u && calloutSpaces < length && line[calloutSpaces] == '!') {
+            size_t calloutEnd = trimRight(line, length);
+            TerminalMarkdownCallout callout =
+                TerminalMarkdownCallout_parse(line + calloutSpaces, calloutEnd - calloutSpaces);
+            if (callout.valid) {
+                if (!emitCallout(self, (*self).lines, (*self).lineCount, &index, 0,
+                                 calloutSpaces + callout.contentStart, callout))
+                    break;
+                continue;
+            }
         }
         if (index + 1u < (*self).lineCount) {
             size_t nextLength = strlen((*self).lines[index + 1u]);
@@ -1879,16 +1602,16 @@ TerminalMarkdownView *TerminalMarkdownView_0(void) {
     if (self == nullptr)
         return nullptr;
     *self = (TerminalMarkdownView) {0};
-    TerminalMarkdownStyle *style = &(*self).style;
-    (*style).body = TerminalPen_0();
-    (*style).heading = TerminalPen_1(TERMINAL_STYLE_BOLD);
-    (*style).code = TerminalPen_2(0, TERMINAL_RGB(112, 190, 130));
-    (*style).link = TerminalPen_1(TERMINAL_STYLE_UNDERLINE);
-    (*style).quote = TerminalPen_2(TERMINAL_STYLE_BOLD, TERMINAL_RGB(105, 190, 220));
-    (*style).rule = TerminalPen_1(TERMINAL_STYLE_DIM);
-    (*style).marker = TerminalPen_2(TERMINAL_STYLE_BOLD, TERMINAL_RGB(235, 190, 95));
-    (*style).fence =
-        TerminalPen_3(TERMINAL_STYLE_DIM, TERMINAL_COLOR_DEFAULT, MARKDOWN_CODE_BLOCK_BG);
+    (*self).codeBlocks = TerminalMarkdownCodeBlockPool_0();
+    if ((*self).codeBlocks == nullptr) {
+        Memory_free(self);
+        return nullptr;
+    }
+    (*self).theme = TerminalMarkdownTheme_0();
+    (*self).style = TerminalMarkdownTheme_style(&(*self).theme);
+    (*self).hoverRow = MARKDOWN_NO_INDEX;
+    (*self).hoverColumn = MARKDOWN_NO_INDEX;
+    (*self).copiedBlock = MARKDOWN_NO_INDEX;
     return self;
 }
 
@@ -1897,7 +1620,7 @@ void TerminalMarkdownView_free(TerminalMarkdownView *self) {
         return;
     Memory_free((*self).rows);
     Memory_free((*self).segments);
-    Memory_free((*self).codeBlocks);
+    TerminalMarkdownCodeBlockPool_free((*self).codeBlocks);
     Memory_free(self);
 }
 
@@ -1924,7 +1647,10 @@ bool TerminalMarkdownView_setSource(TerminalMarkdownView *self, const char *cons
     (*self).failed = false;
     (*self).rowCount = 0;
     (*self).segmentCount = 0;
-    (*self).codeBlockCount = 0;
+    TerminalMarkdownCodeBlockPool_reset((*self).codeBlocks);
+    (*self).hoverRow = MARKDOWN_NO_INDEX;
+    (*self).hoverColumn = MARKDOWN_NO_INDEX;
+    (*self).copiedBlock = MARKDOWN_NO_INDEX;
     (*self).scroll = 0;
     return true;
 }
@@ -1947,7 +1673,8 @@ bool TerminalMarkdownView_setViewport(TerminalMarkdownView *self, size_t width) 
     (*self).failed = false;
     (*self).rowCount = 0;
     (*self).segmentCount = 0;
-    (*self).codeBlockCount = 0;
+    TerminalMarkdownCodeBlockPool_reset((*self).codeBlocks);
+    (*self).copiedBlock = MARKDOWN_NO_INDEX;
     if ((*self).lines == nullptr || (*self).lineCount == 0) {
         (*self).ready = true;
         (*self).scroll = 0;
@@ -2028,7 +1755,7 @@ bool TerminalMarkdownView_scrollBy(TerminalMarkdownView *self, long delta) {
 }
 
 size_t TerminalMarkdownView_codeBlockCount(const TerminalMarkdownView *self) {
-    return self != nullptr ? (*self).codeBlockCount : 0u;
+    return self != nullptr ? TerminalMarkdownCodeBlockPool_count((*self).codeBlocks) : 0u;
 }
 
 TerminalMarkdownCodeBlock TerminalMarkdownView_codeBlockAt(const TerminalMarkdownView *self,
@@ -2036,43 +1763,18 @@ TerminalMarkdownCodeBlock TerminalMarkdownView_codeBlockAt(const TerminalMarkdow
     TerminalMarkdownCodeBlock none = {0};
     if (self == nullptr)
         return none;
-    size_t low = 0;
-    size_t high = (*self).codeBlockCount;
-    while (low < high) {
-        size_t mid = low + (high - low) / 2u;
-        const MarkdownCodeBlockRecord *block = &(*self).codeBlocks[mid];
-        if (row < (*block).firstRow) {
-            high = mid;
-            continue;
-        }
-        if (row - (*block).firstRow >= (*block).rowCount) {
-            low = mid + 1u;
-            continue;
-        }
-        return (TerminalMarkdownCodeBlock) {
-            true, (*block).firstRow, (*block).rowCount, (*block).firstSourceLine,
-            (*block).sourceLineCount, (*block).quoteDepth
-        };
-    }
-    return none;
+    size_t index = 0;
+    if (!TerminalMarkdownCodeBlockPool_indexAt((*self).codeBlocks, row, &index))
+        return none;
+    return TerminalMarkdownCodeBlockPool_at((*self).codeBlocks, index);
 }
 
 TerminalMarkdownCodeLine TerminalMarkdownView_codeBlockLine(const TerminalMarkdownView *self,
                                                             TerminalMarkdownCodeBlock block,
                                                             size_t line) {
-    TerminalMarkdownCodeLine none = {0};
-    if (self == nullptr || !block.valid || line >= block.sourceLineCount)
-        return none;
-    if (block.firstSourceLine > SIZE_MAX - line)
-        return none;
-    size_t sourceLine = block.firstSourceLine + line;
-    if (sourceLine >= (*self).lineCount)
-        return none;
-    const char *text = nullptr;
-    size_t length = 0;
-    if (!fenceContentText((*self).lines[sourceLine], block.quoteDepth, &text, &length))
-        return none;
-    return (TerminalMarkdownCodeLine) { true, text, length };
+    if (self == nullptr)
+        return (TerminalMarkdownCodeLine) {0};
+    return TerminalMarkdownCodeBlock_lineOf((*self).lines, (*self).lineCount, block, line);
 }
 
 bool TerminalMarkdownView_isReady(const TerminalMarkdownView *self) {
@@ -2098,6 +1800,7 @@ bool TerminalMarkdownView_setStyle(TerminalMarkdownView *self, TerminalMarkdownS
         return false;
     }
     (*self).style = style;
+    (*self).theme = TerminalMarkdownTheme_fromStyle(style);
     return true;
 }
 
@@ -2105,17 +1808,36 @@ TerminalMarkdownStyle TerminalMarkdownView_getStyle(const TerminalMarkdownView *
     return self != nullptr ? (*self).style : (TerminalMarkdownStyle) {0};
 }
 
-static TerminalPen penForRole(const TerminalMarkdownStyle *style, TerminalMarkdownRole role) {
-    switch (role) {
-        case TERMINAL_MARKDOWN_HEADING: return (*style).heading;
-        case TERMINAL_MARKDOWN_CODE: return (*style).code;
-        case TERMINAL_MARKDOWN_LINK: return (*style).link;
-        case TERMINAL_MARKDOWN_QUOTE: return (*style).quote;
-        case TERMINAL_MARKDOWN_RULE: return (*style).rule;
-        case TERMINAL_MARKDOWN_MARKER: return (*style).marker;
-        case TERMINAL_MARKDOWN_FENCE: return (*style).fence;
-        default: return (*style).body;
+bool TerminalMarkdownView_setTheme(TerminalMarkdownView *self, TerminalMarkdownTheme theme) {
+    if (self == nullptr) {
+        THROW("TerminalMarkdownView theme: null view");
+        return false;
     }
+    (*self).theme = theme;
+    (*self).style = TerminalMarkdownTheme_style(&(*self).theme);
+    return true;
+}
+
+TerminalMarkdownTheme TerminalMarkdownView_getTheme(const TerminalMarkdownView *self) {
+    return self != nullptr ? (*self).theme : (TerminalMarkdownTheme) {0};
+}
+
+// Draw the copy affordance of one fence on its first row. It is painted AFTER
+// the text so it owns its cells even when a code line runs to the right edge; the
+// glyph is the theme's, and `copiedBlock` decides which of the two it is.
+static void renderCopyIcon(const TerminalMarkdownView *self, TerminalCanvas *canvas,
+                           size_t screenRow, size_t width, size_t blockIndex,
+                           size_t glyphCells) {
+    const TerminalMarkdownTheme *theme = &(*self).theme;
+    bool copied = (*self).copiedBlock == blockIndex;
+    const char *glyph = copied ? (*theme).copiedGlyph : (*theme).copyGlyph;
+    if (glyph == nullptr)
+        return;
+    if (width < glyphCells + 1u)
+        return;
+    size_t column = TerminalMarkdownAction_iconColumn(width, glyphCells);
+    TerminalPen pen = copied ? (*theme).copied : (*theme).copy;
+    TerminalCanvas_text(canvas, column, screenRow, glyph, strlen(glyph), pen);
 }
 
 void TerminalMarkdownView_render(const TerminalMarkdownView *self, TerminalCanvas *canvas) {
@@ -2123,24 +1845,44 @@ void TerminalMarkdownView_render(const TerminalMarkdownView *self, TerminalCanva
         return;
     if (!(*self).ready)
         return;
+    const TerminalMarkdownTheme *theme = &(*self).theme;
+    const char *copyGlyph = (*theme).copyGlyph;
     size_t visible = TerminalCanvas_getHeight(canvas);
     size_t width = TerminalCanvas_getWidth(canvas);
+    size_t glyphCells = cellsOf(copyGlyph, copyGlyph != nullptr ? strlen(copyGlyph) : 0u);
+    if (glyphCells == 0)
+        glyphCells = 1u;
     for (size_t row = 0; row < visible && (*self).scroll + row < (*self).rowCount; ++row) {
-        const MarkdownRow *record = &(*self).rows[(*self).scroll + row];
-        if ((*record).codeBlock) {
+        size_t documentRow = (*self).scroll + row;
+        const MarkdownRow *record = &(*self).rows[documentRow];
+        size_t blockIndex = MARKDOWN_NO_INDEX;
+        bool firstBlockRow = false;
+        if ((*record).codeBlock
+            && TerminalMarkdownCodeBlockPool_indexAt((*self).codeBlocks, documentRow,
+                                                     &blockIndex)) {
             // The wash is painted UNDER the text so code glyph cells keep their own
             // foreground while every cell of the row carries the block background.
-            TerminalPen block = penForRole(&(*self).style, TERMINAL_MARKDOWN_FENCE);
+            TerminalPen block = TerminalMarkdownTheme_pen(&(*self).theme,
+                                                          TERMINAL_MARKDOWN_FENCE, 0, false);
             block.style = 0;
             block.fg = TERMINAL_COLOR_DEFAULT;
             TerminalCanvas_hline(canvas, row, ' ', block);
+            TerminalMarkdownCodeBlock recordBlock =
+                TerminalMarkdownCodeBlockPool_at((*self).codeBlocks, blockIndex);
+            firstBlockRow = recordBlock.firstRow == documentRow;
         }
         size_t x = 0;
         for (size_t index = 0; index < (*record).segmentCount; ++index) {
             const MarkdownSegment *segment = &(*self).segments[(*record).firstSegment + index];
-            TerminalPen pen = penForRole(&(*self).style, (*segment).role);
-            pen.style = (uint8_t) (pen.style | (*segment).style);
             size_t advance = cellsOf((*segment).text, (*segment).length);
+            bool hovered = (*segment).link != nullptr
+                        && (*self).hoverRow == documentRow
+                        && (*self).hoverColumn >= x
+                        && ((*self).hoverColumn < x + advance
+                            || ((*self).hoverColumn == x && advance == 0));
+            TerminalPen pen = TerminalMarkdownTheme_pen(&(*self).theme, (*segment).role,
+                                                        (*segment).variant, hovered);
+            pen.style = (uint16_t) (pen.style | (*segment).style);
             for (size_t repeat = 0; repeat < (*segment).repeat; ++repeat) {
                 if (x >= width)
                     break;
@@ -2152,7 +1894,92 @@ void TerminalMarkdownView_render(const TerminalMarkdownView *self, TerminalCanva
             if (x >= width)
                 break;
         }
+        if (firstBlockRow && blockIndex != MARKDOWN_NO_INDEX)
+            renderCopyIcon(self, canvas, row, width, blockIndex, glyphCells);
     }
+}
+
+// What a press on this DOCUMENT cell means. The view reports it; it never opens
+// the link and never touches the clipboard — that is the caller's tier.
+TerminalMarkdownAction TerminalMarkdownView_actionAt(const TerminalMarkdownView *self,
+                                                     size_t row, size_t column) {
+    TerminalMarkdownAction none = {0};
+    if (self == nullptr || !(*self).ready || row >= (*self).rowCount)
+        return none;
+    size_t blockIndex = MARKDOWN_NO_INDEX;
+    if (TerminalMarkdownCodeBlockPool_indexAt((*self).codeBlocks, row, &blockIndex)) {
+        TerminalMarkdownCodeBlock block =
+            TerminalMarkdownCodeBlockPool_at((*self).codeBlocks, blockIndex);
+        if (block.firstRow == row) {
+            const TerminalMarkdownTheme *theme = &(*self).theme;
+            const char *copyGlyph = (*theme).copyGlyph;
+            size_t glyphCells = cellsOf(copyGlyph,
+                                        copyGlyph != nullptr ? strlen(copyGlyph) : 0u);
+            if (glyphCells == 0)
+                glyphCells = 1u;
+            if (TerminalMarkdownAction_iconHit((*self).width, column, glyphCells))
+                return (TerminalMarkdownAction) { TERMINAL_MARKDOWN_ACTION_COPY_CODE,
+                                                  nullptr, 0, blockIndex };
+        }
+    }
+    const MarkdownRow *record = &(*self).rows[row];
+    size_t x = 0;
+    for (size_t index = 0; index < (*record).segmentCount; ++index) {
+        const MarkdownSegment *segment = &(*self).segments[(*record).firstSegment + index];
+        size_t advance = cellsOf((*segment).text, (*segment).length) * (*segment).repeat;
+        if ((*segment).link != nullptr && column >= x && column < x + advance)
+            return (TerminalMarkdownAction) { TERMINAL_MARKDOWN_ACTION_LINK, (*segment).link,
+                                              (*segment).linkLength, 0 };
+        if (advance > SIZE_MAX - x)
+            break;
+        x += advance;
+    }
+    return none;
+}
+
+bool TerminalMarkdownView_setHover(TerminalMarkdownView *self, size_t row, size_t column) {
+    if (self == nullptr)
+        return false;
+    (*self).hoverRow = row;
+    (*self).hoverColumn = column;
+    return TerminalMarkdownView_actionAt(self, row, column).kind
+           != TERMINAL_MARKDOWN_ACTION_NONE;
+}
+
+void TerminalMarkdownView_clearHover(TerminalMarkdownView *self) {
+    if (self == nullptr)
+        return;
+    (*self).hoverRow = MARKDOWN_NO_INDEX;
+    (*self).hoverColumn = MARKDOWN_NO_INDEX;
+}
+
+bool TerminalMarkdownView_copyBlock(const TerminalMarkdownView *self, size_t block,
+                                    char *dest, size_t capacity, size_t *written) {
+    if (self == nullptr)
+        return false;
+    return TerminalMarkdownCodeBlockPool_copy((*self).codeBlocks, (*self).lines,
+                                              (*self).lineCount, block, dest, capacity, written);
+}
+
+bool TerminalMarkdownView_setCopied(TerminalMarkdownView *self, size_t block, bool copied) {
+    if (self == nullptr)
+        return false;
+    if (!copied) {
+        if (block == MARKDOWN_NO_INDEX || (*self).copiedBlock == block)
+            (*self).copiedBlock = MARKDOWN_NO_INDEX;
+        return true;
+    }
+    if (block >= TerminalMarkdownCodeBlockPool_count((*self).codeBlocks))
+        return false;
+    (*self).copiedBlock = block;
+    return true;
+}
+
+bool TerminalMarkdownView_isCopied(const TerminalMarkdownView *self, size_t block) {
+    if (self == nullptr || block == MARKDOWN_NO_INDEX)
+        return false;
+    return (*self).copiedBlock == block
+        && block < TerminalMarkdownCodeBlockPool_count((*self).codeBlocks);
 }
 
 TerminalProjection TerminalMarkdownView_toString(const TerminalMarkdownView *self) {
@@ -2170,12 +1997,12 @@ TerminalProjection TerminalMarkdownView_toStringStruct(const TerminalMarkdownVie
         "TerminalMarkdownView{lines=<borrowed:%zu>,lineCount=%zu,dirty=%d,ready=%d,"
         "truncated=%d,failed=%d,width=%zu,visibleRows=%zu,scroll=%zu,rows=<owned:%zu>,"
         "rowCount=%zu,rowCapacity=%zu,segments=<owned:%zu>,segmentCount=%zu,"
-        "segmentCapacity=%zu,codeBlocks=<owned:%zu>,codeBlockCount=%zu,"
-        "codeBlockCapacity=%zu,style=<pens>,refusals=%zu}",
+        "segmentCapacity=%zu,codeBlocks=<owned:%zu>,theme=<pens>,hoverRow=%zu,"
+        "hoverColumn=%zu,copiedBlock=%zu,refusals=%zu}",
         (*self).lineCount, (*self).lineCount, (*self).dirty, (*self).ready,
         (*self).truncated, (*self).failed, (*self).width, (*self).visibleRows,
         (*self).scroll, (*self).rowCapacity, (*self).rowCount, (*self).rowCapacity,
         (*self).segmentCapacity, (*self).segmentCount, (*self).segmentCapacity,
-        (*self).codeBlockCapacity, (*self).codeBlockCount, (*self).codeBlockCapacity,
-        (*self).refusals);
+        TerminalMarkdownCodeBlockPool_count((*self).codeBlocks),
+        (*self).hoverRow, (*self).hoverColumn, (*self).copiedBlock, (*self).refusals);
 }

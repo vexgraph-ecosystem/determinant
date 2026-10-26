@@ -7,6 +7,9 @@
 
 #include "ui/surface/terminal_canvas.h"
 #include "ui/surface/terminal_projection.h"
+#include "ui/markdown/markdown_theme.h"
+#include "ui/markdown/markdown_code_block.h"
+#include "ui/markdown/markdown_action.h"
 #include "c23/constructor.h"
 
 // ui/markdown/terminal_markdown_view.h — rendered Markdown in terminal cells.
@@ -37,57 +40,30 @@
 #define TERMINAL_MARKDOWN_ROWS_DEFAULT 64u
 #define TERMINAL_MARKDOWN_SEGMENTS_DEFAULT 256u
 
-// Nine roles, one pen each. A role with an extra style flag (BOLD or UNDERLINE)
-// is how strong/emphasis combine without exploding the role set: the base role
-// supplies the colour, the flag supplies the weight.
-typedef enum TerminalMarkdownRole {
-    TERMINAL_MARKDOWN_BODY = 0,
-    TERMINAL_MARKDOWN_HEADING,
-    TERMINAL_MARKDOWN_CODE,
-    TERMINAL_MARKDOWN_LINK,
-    TERMINAL_MARKDOWN_QUOTE,
-    TERMINAL_MARKDOWN_RULE,
-    TERMINAL_MARKDOWN_MARKER,
-    TERMINAL_MARKDOWN_FENCE
-} TerminalMarkdownRole;
-
-typedef struct TerminalMarkdownStyle {
-    TerminalPen body;
-    TerminalPen heading;
-    TerminalPen code;
-    TerminalPen link;
-    TerminalPen quote;
-    TerminalPen rule;
-    TerminalPen marker;
-    // The fence pen carries BOTH the code text and the block's background band.
-    // Give it a translucent bg and the whole row shades over the host backdrop;
-    // leave bg unset and the block is invisible.
-    TerminalPen fence;
-} TerminalMarkdownStyle;
-
 typedef struct TerminalMarkdownView TerminalMarkdownView;
 
-// VALUE RECORD: TerminalMarkdownCodeBlock (no behaviour; returned by value).
-// One laid-out fenced block. `firstRow`/`rowCount` name the shaded document rows,
-// while `firstSourceLine`/`sourceLineCount` name its content lines in the borrowed
-// source (the opening and closing fences are excluded). `quoteDepth` is nonzero
-// when the fence sits inside a blockquote/callout, so the copy projection strips
-// the quote markers from each line.
-typedef struct TerminalMarkdownCodeBlock {
-    bool valid;
-    size_t firstRow;
-    size_t rowCount;
-    size_t firstSourceLine;
-    size_t sourceLineCount;
-    size_t quoteDepth;
-} TerminalMarkdownCodeBlock;
+// The theme is the full pen ladder; setStyle is its legacy projection. Setting
+// either keeps the other in sync, so a caller that only knows the eight-pen
+// record still gets per-level headings from the default ladder until it chooses
+// a colour.
+bool TerminalMarkdownView_setTheme(TerminalMarkdownView *self, TerminalMarkdownTheme theme);
+TerminalMarkdownTheme TerminalMarkdownView_getTheme(const TerminalMarkdownView *self);
 
-// VALUE RECORD: TerminalMarkdownCodeLine (no behaviour; borrowed view).
-typedef struct TerminalMarkdownCodeLine {
-    bool valid;
-    const char *text;
-    size_t length;
-} TerminalMarkdownCodeLine;
+// Hit testing is COLD and in DOCUMENT rows (the same space as codeBlockAt), not
+// screen rows. `actionAt` says what a press on that cell means; the view never
+// performs it. `setHover` moves the link highlight; `clearHover` removes it.
+TerminalMarkdownAction TerminalMarkdownView_actionAt(const TerminalMarkdownView *self,
+                                                     size_t row, size_t column);
+bool TerminalMarkdownView_setHover(TerminalMarkdownView *self, size_t row, size_t column);
+void TerminalMarkdownView_clearHover(TerminalMarkdownView *self);
+
+// Copy the fence at `block` into `dest` (newline-separated, no trailing
+// newline). Atomic and allocation-free; false when it does not fit. The caller
+// then performs the clipboard write and calls setCopied for the check glyph.
+bool TerminalMarkdownView_copyBlock(const TerminalMarkdownView *self, size_t block,
+                                    char *dest, size_t capacity, size_t *written);
+bool TerminalMarkdownView_setCopied(TerminalMarkdownView *self, size_t block, bool copied);
+bool TerminalMarkdownView_isCopied(const TerminalMarkdownView *self, size_t block);
 
 size_t TerminalMarkdownView_codeBlockCount(const TerminalMarkdownView *self);
 // The block whose shaded rows cover `row` (a document row, not a screen row), or
