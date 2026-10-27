@@ -41,9 +41,11 @@
  * links or footnotes, do math, nest tables, or shape grapheme clusters. Table
  * columns prefer their measured natural widths and wrap at word boundaries only
  * when the whole table cannot fit the viewport; then available cells are divided
- * in proportion to each column's content need. If even the longest-word minimums
- * cannot fit, rows fall back to a vertically stacked label/value presentation
- * rather than clipping source text.
+ * in proportion to each column's content need. When columns cannot share at least
+ * 30 characters wide or overflow the viewport, tables allocate unwarped widths
+ * and scroll horizontally rather than warping text or clipping source cells.
+ * The horizontal pan belongs to the TABLE ALONE: prose, headings, lists and code
+ * never move sideways, and each table row is clamped to its own overflow.
  * Ordered-list marker width comes from the full source span, with no fixed digit
  * count; siblings align to the widest marker. Emoji and other wide scalars consume
  * two terminal cells. Those are
@@ -66,8 +68,10 @@
  *   bool truncated             the wrapped-row limit was reached
  *   bool failed                a cold pool growth was refused
  *   size_t width               content width the current layout used
+ *   size_t contentWidth        unwarped extent of the widest row/table
  *   size_t visibleRows         rows the caller can show (for the scroll clamp)
  *   size_t scroll              first wrapped row drawn
+ *   size_t scrollX             shared TABLE pan offset; prose never uses it
  *   MarkdownRow *rows          owned flat wrapped-row table
  *   size_t rowCount            rows in the document (blank rows included)
  *   size_t rowCapacity         admitted row slots
@@ -122,7 +126,7 @@
  *   emitGap/emitHeading/emitParagraphLine/emitFence/emitQuoteFence/emitRule
  *   emitList/emitQuote
  *   tableCellLine/tableCellLineCount/tableColumnMinimum/tableAllocateWidths
- *   emitTableBorder/appendTableSpaces/emitTableRow/emitTableCompact/emitTable
+ *   emitTableBorder/appendTableSpaces/emitTableRow/emitTable
  *   /splitTableRow/trimSpan;
  *   tables prefer each column's measured content width and proportionally
  *   allocate viewport cells when the natural table does not fit; ordered list siblings share
@@ -141,6 +145,9 @@
  *              size_t maxScroll(self)
  * Scroll:      bool setScroll(self, row); size_t getScroll(self)
  *              bool scrollBy(self, delta)
+ *              size_t contentWidth/maxScrollX(self)
+ *              bool setScrollX(self, column); size_t getScrollX(self)
+ *              size_t rowScrollX(self, row); bool scrollXBy(self, delta)
  * Queries:     size_t rowCount/getWidth(self)
  *              size_t codeBlockCount(self)
  *              TerminalMarkdownCodeBlock codeBlockAt(self, row)
@@ -207,6 +214,8 @@ typedef struct MarkdownRow {
     size_t firstSegment;
     size_t segmentCount;
     bool codeBlock;   // this row is part of a shaded fenced code block
+    bool table;       // this row belongs to a table (the only rows that pan)
+    size_t extent;    // unwarped cell extent of the row, for its own pan clamp
 } MarkdownRow;
 
 typedef struct MarkdownPrefixItem {
@@ -259,8 +268,10 @@ struct TerminalMarkdownView {
     bool truncated;
     bool failed;
     size_t width;
+    size_t contentWidth;
     size_t visibleRows;
     size_t scroll;
+    size_t scrollX;
     MarkdownRow *rows;
     size_t rowCount;
     size_t rowCapacity;
@@ -348,6 +359,13 @@ static void markCodeRows(TerminalMarkdownView *self, size_t first) {
         (*self).rows[index].codeBlock = true;
 }
 
+// Mark every row a table emitted as a table row. The blank gap row before the
+// top border is included; its extent is zero, so its own pan clamp is zero too.
+static void markTableRows(TerminalMarkdownView *self, size_t first) {
+    for (size_t index = first; index < (*self).rowCount; ++index)
+        (*self).rows[index].table = true;
+}
+
 static bool appendRowInternal(TerminalMarkdownView *self, bool force) {
     if (!force && (*self).rowCount + 1u >= TERMINAL_MARKDOWN_ROWS_LIMIT) {
         (*self).truncated = true;
@@ -355,7 +373,8 @@ static bool appendRowInternal(TerminalMarkdownView *self, bool force) {
     }
     if ((*self).rowCount == (*self).rowCapacity && !growRows(self))
         return false;
-    (*self).rows[(*self).rowCount] = (MarkdownRow) { (*self).segmentCount, 0, false };
+    (*self).rows[(*self).rowCount] = (MarkdownRow) { (*self).segmentCount, 0, false,
+                                                     false, 0u };
     ++(*self).rowCount;
     return true;
 }
@@ -1338,47 +1357,6 @@ static bool emitTableRow(TerminalMarkdownView *self, const char *text, size_t le
     return true;
 }
 
-// The honest fallback when even the longest words cannot share the viewport: a
-// stacked label/value list instead of a clipped box. Nothing is cut; the table
-// simply stops pretending to be a grid.
-static bool emitTableCompact(TerminalMarkdownView *self, const char *const *lines,
-                             size_t header, size_t end, size_t columns) {
-    const char *headers[TERMINAL_MARKDOWN_TABLE_COLUMNS];
-    size_t headerLengths[TERMINAL_MARKDOWN_TABLE_COLUMNS];
-    size_t headerCount = TerminalMarkdownTable_split(lines[header], strlen(lines[header]),
-                                                     headers, headerLengths,
-                                                     TERMINAL_MARKDOWN_TABLE_COLUMNS);
-    if (!emitGap(self))
-        return false;
-    for (size_t row = header + 2u; row < end; ++row) {
-        const char *cells[TERMINAL_MARKDOWN_TABLE_COLUMNS];
-        size_t lengths[TERMINAL_MARKDOWN_TABLE_COLUMNS];
-        size_t count = TerminalMarkdownTable_split(lines[row], strlen(lines[row]), cells, lengths,
-                                                   TERMINAL_MARKDOWN_TABLE_COLUMNS);
-        for (size_t column = 0; column < columns; ++column) {
-            MarkdownPrefix prefix = {0};
-            MarkdownWrap wrap = { .prefix = &prefix, .width = (*self).width };
-            if (column < headerCount && headerLengths[column] != 0u) {
-                if (!emitSpans(self, &wrap, headers[column], headerLengths[column],
-                               TERMINAL_MARKDOWN_TABLE_HEADER, 0, 0))
-                    return false;
-                wrapSpace(&wrap);
-                if (!appendPlain(self, &wrap, ":", 1u, TERMINAL_MARKDOWN_BODY, 0))
-                    return false;
-                wrapSpace(&wrap);
-            }
-            if (column < count && lengths[column] != 0u) {
-                if (!emitSpans(self, &wrap, cells[column], lengths[column],
-                               TERMINAL_MARKDOWN_BODY, 0, 0))
-                    return false;
-            } else if (!wrapStart(self, &wrap, true)) {
-                return false;
-            }
-        }
-    }
-    return true;
-}
-
 static bool emitTable(TerminalMarkdownView *self, const char *const *lines, size_t lineCount,
                       size_t *index, size_t columns) {
     if (columns > TERMINAL_MARKDOWN_TABLE_COLUMNS)
@@ -1405,6 +1383,7 @@ static bool emitTable(TerminalMarkdownView *self, const char *const *lines, size
     size_t needed[TERMINAL_MARKDOWN_TABLE_COLUMNS] = {0};
     size_t minimums[TERMINAL_MARKDOWN_TABLE_COLUMNS] = {0};
     size_t widths[TERMINAL_MARKDOWN_TABLE_COLUMNS] = {0};
+    size_t firstRow = (*self).rowCount;
     for (size_t row = header; row < end; ++row) {
         size_t count = TerminalMarkdownTable_split(lines[row], strlen(lines[row]), cells, lengths,
                                                    TERMINAL_MARKDOWN_TABLE_COLUMNS);
@@ -1425,12 +1404,16 @@ static bool emitTable(TerminalMarkdownView *self, const char *const *lines, size
         if (minimums[column] == 0u)
             minimums[column] = 1u;
     }
-    if (!TerminalMarkdownTable_allocate(needed, minimums, widths, columns, (*self).width)) {
-        if (!emitTableCompact(self, lines, header, end, columns))
-            return false;
-        *index = end;
-        return true;
+    bool warped = !TerminalMarkdownTable_allocate(needed, minimums, widths, columns, (*self).width)
+               || TerminalMarkdownTable_isWarped(needed, widths, columns, TERMINAL_MARKDOWN_TABLE_WARP_THRESHOLD);
+    if (warped) {
+        TerminalMarkdownTable_allocateUnwarped(needed, widths, columns);
     }
+    size_t tableTotalWidth = columns * 3u + 1u;
+    for (size_t column = 0; column < columns; ++column)
+        tableTotalWidth += widths[column];
+    if (tableTotalWidth > (*self).contentWidth)
+        (*self).contentWidth = tableTotalWidth;
     if (!emitGap(self))
         return false;
     if (!emitTableBorder(self, widths, columns, 0u)
@@ -1440,6 +1423,7 @@ static bool emitTable(TerminalMarkdownView *self, const char *const *lines, size
     if (body == end) {
         if (!emitTableBorder(self, widths, columns, 2u))
             return false;
+        markTableRows(self, firstRow);
         *index = end;
         return true;
     }
@@ -1451,6 +1435,7 @@ static bool emitTable(TerminalMarkdownView *self, const char *const *lines, size
         if (!emitTableBorder(self, widths, columns, row + 1u < end ? 1u : 2u))
             return false;
     }
+    markTableRows(self, firstRow);
     *index = end;
     return true;
 }
@@ -1477,6 +1462,7 @@ static bool startsBlock(const char *text, size_t length) {
 
 static bool layout(TerminalMarkdownView *self) {
     TerminalMarkdownCodeBlockPool_reset((*self).codeBlocks);
+    (*self).contentWidth = (*self).width;
     size_t index = 0;
     while (index < (*self).lineCount && !(*self).failed && !(*self).truncated) {
         const char *line = (*self).lines[index];
@@ -1594,6 +1580,17 @@ static bool layout(TerminalMarkdownView *self) {
                            TERMINAL_MARKDOWN_MARKER, 0))
             return false;
     }
+    for (size_t r = 0; r < (*self).rowCount; ++r) {
+        const MarkdownRow *rowRec = &(*self).rows[r];
+        size_t rowWidth = 0;
+        for (size_t s = 0; s < (*rowRec).segmentCount; ++s) {
+            const MarkdownSegment *seg = &(*self).segments[(*rowRec).firstSegment + s];
+            rowWidth += cellsOf((*seg).text, (*seg).length) * (*seg).repeat;
+        }
+        if (rowWidth > (*self).contentWidth)
+            (*self).contentWidth = rowWidth;
+        (*self).rows[r].extent = rowWidth;
+    }
     return !(*self).failed;
 }
 
@@ -1652,6 +1649,8 @@ bool TerminalMarkdownView_setSource(TerminalMarkdownView *self, const char *cons
     (*self).hoverColumn = MARKDOWN_NO_INDEX;
     (*self).copiedBlock = MARKDOWN_NO_INDEX;
     (*self).scroll = 0;
+    (*self).scrollX = 0;
+    (*self).contentWidth = 0;
     return true;
 }
 
@@ -1678,6 +1677,8 @@ bool TerminalMarkdownView_setViewport(TerminalMarkdownView *self, size_t width) 
     if ((*self).lines == nullptr || (*self).lineCount == 0) {
         (*self).ready = true;
         (*self).scroll = 0;
+        (*self).scrollX = 0;
+        (*self).contentWidth = width;
         return true;
     }
     if (!layout(self)) {
@@ -1687,6 +1688,8 @@ bool TerminalMarkdownView_setViewport(TerminalMarkdownView *self, size_t width) 
     (*self).ready = true;
     if ((*self).scroll > TerminalMarkdownView_maxScroll(self))
         (*self).scroll = TerminalMarkdownView_maxScroll(self);
+    if ((*self).scrollX > TerminalMarkdownView_maxScrollX(self))
+        (*self).scrollX = TerminalMarkdownView_maxScrollX(self);
     return true;
 }
 
@@ -1751,6 +1754,69 @@ bool TerminalMarkdownView_scrollBy(TerminalMarkdownView *self, long delta) {
     if (wanted == (*self).scroll)
         return false;
     (*self).scroll = wanted;
+    return true;
+}
+
+size_t TerminalMarkdownView_contentWidth(const TerminalMarkdownView *self) {
+    return self != nullptr ? (*self).contentWidth : 0u;
+}
+
+size_t TerminalMarkdownView_maxScrollX(const TerminalMarkdownView *self) {
+    if (self == nullptr)
+        return 0u;
+    if ((*self).contentWidth <= (*self).width)
+        return 0u;
+    return (*self).contentWidth - (*self).width;
+}
+
+// The pan one row may take. Prose, headings and code never move: their wrapped
+// extent is already the viewport. Only a table row may pan, and only by the
+// overflow it actually has, so a table that fits stays put even when a wider one
+// shares the document-wide offset.
+static size_t rowScrollX(const TerminalMarkdownView *self, size_t row) {
+    if (self == nullptr || row >= (*self).rowCount)
+        return 0u;
+    const MarkdownRow *record = &(*self).rows[row];
+    if (!(*record).table)
+        return 0u;
+    size_t limit = (*record).extent > (*self).width ? (*record).extent - (*self).width : 0u;
+    return (*self).scrollX < limit ? (*self).scrollX : limit;
+}
+
+bool TerminalMarkdownView_setScrollX(TerminalMarkdownView *self, size_t column) {
+    if (self == nullptr) {
+        THROW("TerminalMarkdownView scrollX: null view");
+        return false;
+    }
+    size_t maximum = TerminalMarkdownView_maxScrollX(self);
+    (*self).scrollX = column > maximum ? maximum : column;
+    return true;
+}
+
+size_t TerminalMarkdownView_getScrollX(const TerminalMarkdownView *self) {
+    return self != nullptr ? (*self).scrollX : 0u;
+}
+
+size_t TerminalMarkdownView_rowScrollX(const TerminalMarkdownView *self, size_t row) {
+    return rowScrollX(self, row);
+}
+
+bool TerminalMarkdownView_scrollXBy(TerminalMarkdownView *self, long delta) {
+    if (self == nullptr)
+        return false;
+    size_t maximum = TerminalMarkdownView_maxScrollX(self);
+    size_t wanted = (*self).scrollX;
+    if (delta < 0) {
+        size_t amount = (size_t) -delta;
+        wanted = amount > wanted ? 0u : wanted - amount;
+    } else if (delta > 0) {
+        wanted += (size_t) delta;
+        if (wanted > maximum)
+            wanted = maximum;
+    }
+    if (wanted == (*self).scrollX)
+        return false;
+    (*self).scrollX = wanted;
     return true;
 }
 
@@ -1855,6 +1921,9 @@ void TerminalMarkdownView_render(const TerminalMarkdownView *self, TerminalCanva
     for (size_t row = 0; row < visible && (*self).scroll + row < (*self).rowCount; ++row) {
         size_t documentRow = (*self).scroll + row;
         const MarkdownRow *record = &(*self).rows[documentRow];
+        // Horizontal pan is the table's own. Every other row paints at its
+        // document origin, so prose stays fixed while a warped table slides.
+        size_t scrollX = rowScrollX(self, documentRow);
         size_t blockIndex = MARKDOWN_NO_INDEX;
         bool firstBlockRow = false;
         if ((*record).codeBlock
@@ -1875,23 +1944,45 @@ void TerminalMarkdownView_render(const TerminalMarkdownView *self, TerminalCanva
         for (size_t index = 0; index < (*record).segmentCount; ++index) {
             const MarkdownSegment *segment = &(*self).segments[(*record).firstSegment + index];
             size_t advance = cellsOf((*segment).text, (*segment).length);
+            size_t totalSpan = advance * (*segment).repeat;
             bool hovered = (*segment).link != nullptr
                         && (*self).hoverRow == documentRow
                         && (*self).hoverColumn >= x
-                        && ((*self).hoverColumn < x + advance
-                            || ((*self).hoverColumn == x && advance == 0));
+                        && ((*self).hoverColumn < x + totalSpan
+                            || ((*self).hoverColumn == x && totalSpan == 0));
             TerminalPen pen = TerminalMarkdownTheme_pen(&(*self).theme, (*segment).role,
                                                         (*segment).variant, hovered);
             pen.style = (uint16_t) (pen.style | (*segment).style);
             for (size_t repeat = 0; repeat < (*segment).repeat; ++repeat) {
-                if (x >= width)
+                if (x >= scrollX + width) {
+                    x += advance;
                     break;
-                TerminalCanvas_text(canvas, x, row, (*segment).text, (*segment).length, pen);
+                }
+                if (x + advance <= scrollX) {
+                    x += advance;
+                    continue;
+                }
+                if (x >= scrollX && x + advance <= scrollX + width) {
+                    TerminalCanvas_text(canvas, x - scrollX, row, (*segment).text, (*segment).length, pen);
+                    x += advance;
+                    continue;
+                }
+                size_t at = 0;
+                while (at < (*segment).length) {
+                    TerminalCanvasDecodedScalar decoded =
+                        TerminalCanvas_utf8Decode((*segment).text + at, (*segment).length - at);
+                    size_t bytes = decoded.bytes == 0 ? 1u : decoded.bytes;
+                    size_t cellW = decoded.bytes == 0 ? 1u : TerminalCanvas_widthOf(decoded.codepoint);
+                    if (x >= scrollX && x + cellW <= scrollX + width) {
+                        TerminalCanvas_text(canvas, x - scrollX, row, (*segment).text + at, bytes, pen);
+                    }
+                    x += cellW;
+                    at += bytes;
+                }
                 if (advance == 0)
                     break;
-                x += advance;
             }
-            if (x >= width)
+            if (x >= scrollX + width)
                 break;
         }
         if (firstBlockRow && blockIndex != MARKDOWN_NO_INDEX)
@@ -1917,7 +2008,8 @@ TerminalMarkdownAction TerminalMarkdownView_actionAt(const TerminalMarkdownView 
                                         copyGlyph != nullptr ? strlen(copyGlyph) : 0u);
             if (glyphCells == 0)
                 glyphCells = 1u;
-            if (TerminalMarkdownAction_iconHit((*self).width, column, glyphCells))
+            size_t screenCol = column;
+            if (TerminalMarkdownAction_iconHit((*self).width, screenCol, glyphCells))
                 return (TerminalMarkdownAction) { TERMINAL_MARKDOWN_ACTION_COPY_CODE,
                                                   nullptr, 0, blockIndex };
         }
@@ -1986,8 +2078,8 @@ TerminalProjection TerminalMarkdownView_toString(const TerminalMarkdownView *sel
     if (self == nullptr)
         return TerminalProjection_format("nullptr");
     return TerminalProjection_format(
-        "TerminalMarkdownView{rows=%zu,width=%zu,scroll=%zu,ready=%d,truncated=%d}",
-        (*self).rowCount, (*self).width, (*self).scroll, (*self).ready, (*self).truncated);
+        "TerminalMarkdownView{rows=%zu,width=%zu,contentWidth=%zu,scroll=%zu,scrollX=%zu,ready=%d,truncated=%d}",
+        (*self).rowCount, (*self).width, (*self).contentWidth, (*self).scroll, (*self).scrollX, (*self).ready, (*self).truncated);
 }
 
 TerminalProjection TerminalMarkdownView_toStringStruct(const TerminalMarkdownView *self) {
@@ -1995,13 +2087,13 @@ TerminalProjection TerminalMarkdownView_toStringStruct(const TerminalMarkdownVie
         return TerminalProjection_format("nullptr");
     return TerminalProjection_format(
         "TerminalMarkdownView{lines=<borrowed:%zu>,lineCount=%zu,dirty=%d,ready=%d,"
-        "truncated=%d,failed=%d,width=%zu,visibleRows=%zu,scroll=%zu,rows=<owned:%zu>,"
+        "truncated=%d,failed=%d,width=%zu,contentWidth=%zu,visibleRows=%zu,scroll=%zu,scrollX=%zu,rows=<owned:%zu>,"
         "rowCount=%zu,rowCapacity=%zu,segments=<owned:%zu>,segmentCount=%zu,"
         "segmentCapacity=%zu,codeBlocks=<owned:%zu>,theme=<pens>,hoverRow=%zu,"
         "hoverColumn=%zu,copiedBlock=%zu,refusals=%zu}",
         (*self).lineCount, (*self).lineCount, (*self).dirty, (*self).ready,
-        (*self).truncated, (*self).failed, (*self).width, (*self).visibleRows,
-        (*self).scroll, (*self).rowCapacity, (*self).rowCount, (*self).rowCapacity,
+        (*self).truncated, (*self).failed, (*self).width, (*self).contentWidth, (*self).visibleRows,
+        (*self).scroll, (*self).scrollX, (*self).rowCapacity, (*self).rowCount, (*self).rowCapacity,
         (*self).segmentCapacity, (*self).segmentCount, (*self).segmentCapacity,
         TerminalMarkdownCodeBlockPool_count((*self).codeBlocks),
         (*self).hoverRow, (*self).hoverColumn, (*self).copiedBlock, (*self).refusals);

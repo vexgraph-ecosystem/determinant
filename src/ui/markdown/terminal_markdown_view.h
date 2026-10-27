@@ -106,6 +106,20 @@ bool TerminalMarkdownView_setScroll(TerminalMarkdownView *self, size_t row);
 size_t TerminalMarkdownView_getScroll(const TerminalMarkdownView *self);
 bool TerminalMarkdownView_scrollBy(TerminalMarkdownView *self, long delta);
 
+// The horizontal scroll is in COLUMNS, clamped to [0, maxScrollX]. `contentWidth`
+// is the unwarped extent of the widest row/table in the document. The offset is a
+// TABLE pan: prose and code paint at column zero, and every table row is clamped
+// to its own overflow, so reading a wide table never slides the document.
+size_t TerminalMarkdownView_contentWidth(const TerminalMarkdownView *self);
+size_t TerminalMarkdownView_maxScrollX(const TerminalMarkdownView *self);
+bool TerminalMarkdownView_setScrollX(TerminalMarkdownView *self, size_t column);
+size_t TerminalMarkdownView_getScrollX(const TerminalMarkdownView *self);
+// The pan actually applied to one document row: 0 outside a table, else
+// `min(scrollX, rowExtent - width)`. A caller mapping a pointer to a DOCUMENT
+// column adds this after the content-rect origin.
+size_t TerminalMarkdownView_rowScrollX(const TerminalMarkdownView *self, size_t row);
+bool TerminalMarkdownView_scrollXBy(TerminalMarkdownView *self, long delta);
+
 bool TerminalMarkdownView_isReady(const TerminalMarkdownView *self);
 bool TerminalMarkdownView_isTruncated(const TerminalMarkdownView *self);
 size_t TerminalMarkdownView_exhaustionCount(const TerminalMarkdownView *self);
