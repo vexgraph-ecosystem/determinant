@@ -23,9 +23,14 @@
  *            lineCount(text, length, width)
  * Wrap:      cellLine(text, length, offset, width)
  * Allocate:  allocate(needed, minimums, widths, columns, viewport)
+ *            allocateUnwarped(needed, widths, columns); padWidth(width)
+ * Warp:      isWarped(needed, widths, columns, threshold)
  * CONTRACT: `\|` and pipes inside a backtick run never split a cell; an optional
  * outer pipe is ignored; an empty interior cell is a real column; truncation
- * leaves one cell free for the caller's ellipsis.
+ * leaves one cell free for the caller's ellipsis. Column content widths are
+ * raised to a multiple of 4 whenever the raised table still fits its fit
+ * budget, so the borders sit on a 4-cell grid; otherwise the budget wins and
+ * the exact widths stand.
  * ============================================================================ */
 
 static size_t cellTrimStart(const char *text, size_t start, size_t end) {
@@ -230,6 +235,21 @@ size_t TerminalMarkdownTable_lineCount(const char *text, size_t length, size_t w
     return count == 0 ? 1u : count;
 }
 
+static void applySpacing(size_t *widths, size_t columns, size_t available) {
+    // Raise every column to the 4-cell spacing floor, but only if the raised table
+    // still fits the cells this viewport gave it. Otherwise the fit budget wins and
+    // the exact widths stand: a table must not gain a scrollbar to satisfy rounding.
+    size_t total = 0;
+    for (size_t column = 0; column < columns; ++column) {
+        size_t padded = TerminalMarkdownTable_padWidth(widths[column]);
+        if (padded > available - total)
+            return;
+        total += padded;
+    }
+    for (size_t column = 0; column < columns; ++column)
+        widths[column] = TerminalMarkdownTable_padWidth(widths[column]);
+}
+
 bool TerminalMarkdownTable_allocate(const size_t *needed, const size_t *minimums, size_t *widths,
                             size_t columns, size_t viewport) {
     if (needed == nullptr || minimums == nullptr || widths == nullptr || columns == 0)
@@ -262,6 +282,7 @@ bool TerminalMarkdownTable_allocate(const size_t *needed, const size_t *minimums
     if (neededFits) {
         for (size_t column = 0; column < columns; ++column)
             widths[column] = needed[column];
+        applySpacing(widths, columns, available);
         return true;
     }
     size_t extraBudget = available - minimumTotal;
@@ -270,8 +291,10 @@ bool TerminalMarkdownTable_allocate(const size_t *needed, const size_t *minimums
         size_t extra = needed[column] > minimums[column] ? needed[column] - minimums[column] : 0u;
         remainingNeed = extra > SIZE_MAX - remainingNeed ? SIZE_MAX : remainingNeed + extra;
     }
-    if (remainingNeed == 0u)
+    if (remainingNeed == 0u) {
+        applySpacing(widths, columns, available);
         return true;
+    }
     size_t used = 0;
     long double fractions[TERMINAL_MARKDOWN_TABLE_COLUMNS] = {0};
     for (size_t column = 0; column < columns; ++column) {
@@ -297,5 +320,40 @@ bool TerminalMarkdownTable_allocate(const size_t *needed, const size_t *minimums
         ++used;
         fractions[chosen] = -1.0L;
     }
+    applySpacing(widths, columns, available);
     return true;
 }
+
+bool TerminalMarkdownTable_isWarped(const size_t *needed, const size_t *widths,
+                                    size_t columns, size_t threshold) {
+    if (needed == nullptr || widths == nullptr || columns == 0)
+        return false;
+    size_t limit = threshold != 0u ? threshold : TERMINAL_MARKDOWN_TABLE_WARP_THRESHOLD;
+    for (size_t column = 0; column < columns; ++column) {
+        if (widths[column] < needed[column] && widths[column] < limit)
+            return true;
+    }
+    return false;
+}
+
+size_t TerminalMarkdownTable_allocateUnwarped(const size_t *needed, size_t *widths,
+                                              size_t columns) {
+    if (widths == nullptr || columns == 0)
+        return 0;
+    size_t total = columns * 3u + 1u;
+    for (size_t column = 0; column < columns; ++column) {
+        size_t width = (needed != nullptr && needed[column] != 0u) ? needed[column] : 1u;
+        widths[column] = TerminalMarkdownTable_padWidth(width);
+        total += widths[column];
+    }
+    return total;
+}
+
+size_t TerminalMarkdownTable_padWidth(size_t width) {
+    if (width == 0u)
+        return 4u;
+    if (width > SIZE_MAX - 3u)
+        return SIZE_MAX & ~(size_t) 3u;
+    return (width + 3u) & ~(size_t) 3u;
+}
+

@@ -14,6 +14,7 @@
 // is drawn.
 
 #define TERMINAL_MARKDOWN_TABLE_COLUMNS 16u
+#define TERMINAL_MARKDOWN_TABLE_WARP_THRESHOLD 30u
 
 typedef enum TerminalMarkdownTableAlign {
     TERMINAL_MARKDOWN_TABLE_LEFT = 0,
@@ -68,5 +69,24 @@ TerminalMarkdownTableCellLine TerminalMarkdownTable_cellLine(const char *text, s
 // clipping a column to zero.
 bool TerminalMarkdownTable_allocate(const size_t *needed, const size_t *minimums, size_t *widths,
                             size_t columns, size_t viewport);
+
+// True when any column whose needed width exceeds its allocated width was squeezed
+// below `threshold` display cells. If `threshold` is 0,
+// TERMINAL_MARKDOWN_TABLE_WARP_THRESHOLD (30) is used.
+bool TerminalMarkdownTable_isWarped(const size_t *needed, const size_t *widths,
+                                    size_t columns, size_t threshold);
+
+// Allocate columns at unwarped widths: natural width when reasonable, so cells do
+// not degrade into narrow vertical ribbons, with every column rounded up to the
+// 4-cell spacing floor. Returns total width including borders and margins.
+size_t TerminalMarkdownTable_allocateUnwarped(const size_t *needed, size_t *widths,
+                                              size_t columns);
+
+// Spacing floor: one column's content width is a whole number of 4-cell steps
+// (21 -> 24, 4 -> 4, 0 -> 4), so a table's vertical borders fall on a stable grid
+// and a cell has air on both sides instead of hugging the pipe. Allocation applies
+// it whenever the raised table still fits its budget, and a warped table always
+// rounds every column because it pans anyway.
+size_t TerminalMarkdownTable_padWidth(size_t width);
 
 #endif
